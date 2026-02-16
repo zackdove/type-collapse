@@ -49,3 +49,43 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+
+.loading-screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #c90000;
+  color: #f7f7f7;
+  z-index: 3000;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 320ms ease, visibility 0s linear 320ms;
+}
+
+.loading-screen.is-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 220ms ease;
+}
+
+.loading-screen__content {
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.loading-screen__kicker {
+  margin: 0;
+  font-size: clamp(0.75rem, 1.5vw, 0.9rem);
+  letter-spacing: 0.32em;
+  opacity: 0.9;
+}
+
+.loading-screen__title {
+  margin: 0.4rem 0 0;
+  font-size: clamp(1.5rem, 4vw, 3rem);
+  letter-spacing: 0.18em;
+  line-height: 1;
+}

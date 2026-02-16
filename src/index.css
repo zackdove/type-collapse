@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap");
 
 * {
   box-sizing: border-box;
@@ -16,7 +16,43 @@ body {
   background: #05070c;
   color: #e8f4ff;
   overflow: hidden;
-  font-family: 'Space Grotesk', 'Avenir Next', 'Segoe UI', sans-serif;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.leva {
+  --leva-fonts-mono: "JetBrains Mono", monospace;
+  --leva-fonts-sans: "Inter", system-ui, sans-serif;
+
+  font-family: var(--leva-fonts-sans) !important;
+}
+
+.leva * {
+  font-family: inherit !important;
+}
+
+.leva-wrapper {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 330px;
+  max-height: calc(100dvh - 20px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  z-index: 1000;
+}
+
+.leva-wrapper > div {
+  width: 100%;
+}
+
+@media (max-width: 767px) {
+  .leva-wrapper {
+    left: 10px;
+    right: 10px;
+    width: auto;
+  }
 }
