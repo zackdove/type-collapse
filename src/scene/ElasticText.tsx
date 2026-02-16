@@ -24,7 +24,16 @@ export type DistortionSettings = {
   roughness: number
   metalness: number
   wireframe: boolean
+  characterMode: DistortionCharacterMode
+  characterStrength: number
 }
+
+export type DistortionCharacterMode =
+  | 'Organic'
+  | 'Shear'
+  | 'Rip'
+  | 'Crunch'
+  | 'Melt'
 
 export type DistortionAutomationMode = 'Off' | 'Sweep' | 'BPM Buzz'
 
@@ -475,7 +484,11 @@ export function ElasticText({
       const dz = baseZ - pointer.z
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
 
-      const pointerInfluence = distance <= radius ? activeDistortion.explodeAmplitude : 0
+      const withinRadius = distance <= radius
+      const pointerInfluence = withinRadius ? activeDistortion.explodeAmplitude : 0
+      const pointerFalloff = withinRadius
+        ? 1 - clamp(distance / radius, 0, 1)
+        : 0
 
       const noiseX = noise3d(currentX * frequency + seed * 0.17, currentY * frequency + t, currentZ * frequency)
       const noiseY = noise3d(currentX * frequency, currentY * frequency + 23.713 + t, currentZ * frequency + seed * 0.31)
@@ -498,6 +511,57 @@ export function ElasticText({
         distortedX = scratchVector.x
         distortedY = scratchVector.y
         distortedZ = scratchVector.z
+
+        const characterStrength =
+          activeDistortion.characterStrength * pointerFalloff * press
+        const inverseDistance = 1 / Math.max(distance, 0.0001)
+        const radialX = (baseX - pointer.x) * inverseDistance
+        const radialY = (baseY - pointer.y) * inverseDistance
+        const radialZ = (baseZ - pointer.z) * inverseDistance
+
+        switch (activeDistortion.characterMode) {
+          case 'Shear': {
+            const shear =
+              characterStrength *
+              (0.55 + 0.45 * Math.sin(baseY * 3.2 + t * 2.1 + seed * 0.07))
+            distortedX +=
+              (baseY - pointer.y) * shear * 0.7 +
+              noiseY * characterStrength * 0.24
+            distortedZ += shear * 0.22 + noiseZ * characterStrength * 0.15
+            break
+          }
+          case 'Rip': {
+            const ripWave =
+              Math.sin(distance * 20 - t * 9 + noiseX * 3.1 + seed * 0.3) *
+              characterStrength
+            distortedX += radialX * ripWave * 0.62
+            distortedY += radialY * ripWave * 0.38
+            distortedZ += radialZ * ripWave * 0.58
+            break
+          }
+          case 'Crunch': {
+            const crunchPull =
+              characterStrength * (0.45 + pointerFalloff * 0.9)
+            distortedX += (pointer.x - distortedX) * crunchPull * 0.42
+            distortedY += (pointer.y - distortedY) * crunchPull * 0.44
+            distortedZ += (pointer.z - distortedZ) * crunchPull * 0.34
+            distortedX += noiseX * crunchPull * 0.22
+            distortedY += noiseY * crunchPull * 0.18
+            break
+          }
+          case 'Melt': {
+            const melt =
+              characterStrength *
+              (0.6 + 0.4 * Math.sin(baseX * 2.7 + t * 1.9 + seed * 0.11))
+            distortedY -= melt * (0.62 + pointerFalloff * 0.48)
+            distortedX += noiseZ * melt * 0.24
+            distortedZ += noiseY * melt * 0.21
+            break
+          }
+          case 'Organic':
+          default:
+            break
+        }
       }
 
       const targetX = baseX + (distortedX - baseX) * mixFactor

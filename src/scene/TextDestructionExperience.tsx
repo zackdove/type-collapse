@@ -2,14 +2,18 @@ import { OrbitControls } from "@react-three/drei";
 import {
   Bloom,
   ChromaticAberration,
+  ColorDepth,
   DepthOfField,
   EffectComposer,
+  Glitch,
   Noise,
+  Pixelation,
+  Scanline,
   Vignette,
 } from "@react-three/postprocessing";
 import { button, useControls } from "leva";
 import gsap from "gsap";
-import { BlendFunction } from "postprocessing";
+import { BlendFunction, GlitchMode } from "postprocessing";
 import {
   useCallback,
   useEffect,
@@ -27,9 +31,12 @@ import {
   ElasticText,
   type DistortionAutomationMode,
   type DistortionAutomationSettings,
+  type DistortionCharacterMode,
   type DistortionSettings,
 } from "./ElasticText";
+import { BrutalistCompositeFx } from "./effects/BrutalistCompositeFx";
 import { CinematicMotionBlur } from "./effects/CinematicMotionBlur";
+import { TemporalFeedbackTrail } from "./effects/TemporalFeedbackTrail";
 
 type TimelineSnapshot = {
   cameraPosition: Vector3;
@@ -80,6 +87,38 @@ const DISTORTION_AUTOMATION_MODE_OPTIONS: Record<
   "BPM Buzz": "BPM Buzz",
 };
 
+const DISTORTION_CHARACTER_MODE_OPTIONS: Record<
+  DistortionCharacterMode,
+  DistortionCharacterMode
+> = {
+  Organic: "Organic",
+  Shear: "Shear",
+  Rip: "Rip",
+  Crunch: "Crunch",
+  Melt: "Melt",
+};
+
+type GlitchModeControl = "Sporadic" | "Constant Mild" | "Constant Wild";
+
+const GLITCH_MODE_OPTIONS: Record<GlitchModeControl, GlitchModeControl> = {
+  Sporadic: "Sporadic",
+  "Constant Mild": "Constant Mild",
+  "Constant Wild": "Constant Wild",
+};
+
+const LOOK_PRESETS = [
+  "Neon Fracture",
+  "Mono Brutalist",
+  "Wireframe Acid",
+  "Xerox Collapse",
+] as const;
+
+type LookPreset = (typeof LOOK_PRESETS)[number];
+
+const LOOK_PRESET_OPTIONS = Object.fromEntries(
+  LOOK_PRESETS.map((preset) => [preset, preset]),
+) as Record<LookPreset, LookPreset>;
+
 const BPM_STEPS_OPTIONS: Record<string, number> = {
   Quarter: 1,
   Eighth: 2,
@@ -99,6 +138,36 @@ function asDistortionAutomationMode(value: string): DistortionAutomationMode {
   }
 
   return "Off";
+}
+
+function asDistortionCharacterMode(value: string): DistortionCharacterMode {
+  if (
+    value === "Organic" ||
+    value === "Shear" ||
+    value === "Rip" ||
+    value === "Crunch" ||
+    value === "Melt"
+  ) {
+    return value;
+  }
+
+  return "Organic";
+}
+
+function asGlitchMode(value: string): GlitchMode {
+  if (value === "Constant Mild") {
+    return GlitchMode.CONSTANT_MILD;
+  }
+  if (value === "Constant Wild") {
+    return GlitchMode.CONSTANT_WILD;
+  }
+  return GlitchMode.SPORADIC;
+}
+
+function asLookPreset(value: string): LookPreset {
+  return LOOK_PRESETS.includes(value as LookPreset)
+    ? (value as LookPreset)
+    : "Neon Fracture";
 }
 
 function asFogMode(value: string): FogMode {
@@ -833,6 +902,11 @@ export function TextDestructionExperience() {
       radius: { value: 0.5, min: 0.05, max: 3, step: 0.01 },
       explodeAmplitude: { value: 1.5, min: 0, max: 5, step: 0.01 },
       rotationAmplitude: { value: 1.0, min: 0, max: 5, step: 0.01 },
+      characterMode: {
+        value: "Organic",
+        options: DISTORTION_CHARACTER_MODE_OPTIONS,
+      },
+      characterStrength: { value: 1.0, min: 0, max: 2.5, step: 0.01 },
       spring: { value: 0.05, min: 0.001, max: 0.2, step: 0.001 },
       friction: { value: 0.9, min: 0.5, max: 0.999, step: 0.001 },
       idleMix: { value: 0.0, min: 0, max: 0.5, step: 0.001 },
@@ -847,7 +921,7 @@ export function TextDestructionExperience() {
     [],
   );
 
-  const [automationControls] = useControls(
+  const [automationControls, setAutomationControls] = useControls(
     "Distortion Automation",
     () => ({
       mode: { value: "Sweep", options: DISTORTION_AUTOMATION_MODE_OPTIONS },
@@ -892,6 +966,36 @@ export function TextDestructionExperience() {
       motionBlurDirectionY: { value: 0.35, min: -2, max: 2, step: 0.01 },
       motionBlurSamples: { value: 8, min: 2, max: 24, step: 1 },
       motionBlurOpacity: { value: 0.3, min: 0, max: 1, step: 0.01 },
+      trailEnabled: false,
+      trailStrength: { value: 0.008, min: 0, max: 0.03, step: 0.0001 },
+      trailDispersion: { value: 0.35, min: 0, max: 1.5, step: 0.01 },
+      trailSamples: { value: 10, min: 2, max: 24, step: 1 },
+      trailOpacity: { value: 0.4, min: 0, max: 1, step: 0.01 },
+      brutalistCompositeEnabled: false,
+      brutalistPosterizeSteps: { value: 7, min: 2, max: 24, step: 1 },
+      brutalistEdgeStrength: { value: 1.1, min: 0, max: 4, step: 0.01 },
+      brutalistDitherStrength: { value: 0.18, min: 0, max: 1, step: 0.01 },
+      brutalistGrain: { value: 0.03, min: 0, max: 0.4, step: 0.001 },
+      brutalistWarp: { value: 0.12, min: 0, max: 1.25, step: 0.01 },
+      brutalistOpacity: { value: 0.45, min: 0, max: 1, step: 0.01 },
+      pixelationEnabled: false,
+      pixelationGranularity: { value: 3, min: 1, max: 18, step: 1 },
+      scanlineEnabled: false,
+      scanlineDensity: { value: 1.25, min: 0.1, max: 4, step: 0.01 },
+      scanlineOpacity: { value: 0.22, min: 0, max: 1, step: 0.01 },
+      colorDepthEnabled: false,
+      colorDepthBits: { value: 16, min: 2, max: 32, step: 1 },
+      glitchEnabled: false,
+      glitchMode: { value: "Sporadic", options: GLITCH_MODE_OPTIONS },
+      glitchDelayMin: { value: 0.9, min: 0, max: 5, step: 0.01 },
+      glitchDelayMax: { value: 1.8, min: 0, max: 5, step: 0.01 },
+      glitchDurationMin: { value: 0.09, min: 0, max: 2, step: 0.01 },
+      glitchDurationMax: { value: 0.22, min: 0, max: 2, step: 0.01 },
+      glitchStrengthX: { value: 0.12, min: 0, max: 2, step: 0.01 },
+      glitchStrengthY: { value: 0.22, min: 0, max: 2, step: 0.01 },
+      glitchChromaticX: { value: 0.001, min: 0, max: 0.02, step: 0.0001 },
+      glitchChromaticY: { value: 0.0015, min: 0, max: 0.02, step: 0.0001 },
+      glitchRatio: { value: 0.86, min: 0, max: 1, step: 0.01 },
       chromaticEnabled: true,
       chromaticOffsetX: { value: 0.0012, min: 0, max: 0.01, step: 0.0001 },
       chromaticOffsetY: { value: 0.0012, min: 0, max: 0.01, step: 0.0001 },
@@ -904,7 +1008,7 @@ export function TextDestructionExperience() {
     [],
   );
 
-  const [environmentControls] = useControls(
+  const [environmentControls, setEnvironmentControls] = useControls(
     "Environment",
     () => ({
       backgroundColor: "#080b12",
@@ -923,10 +1027,13 @@ export function TextDestructionExperience() {
     }),
     [],
   );
+  const lookPresetRef = useRef<LookPreset>("Neon Fracture");
   const distortionControlsRef = useRef(distortionControls);
   const postFxControlsRef = useRef(postFxControls);
   const setDistortionControlsRef = useRef(setDistortionControls);
   const setPostFxControlsRef = useRef(setPostFxControls);
+  const setAutomationControlsRef = useRef(setAutomationControls);
+  const setEnvironmentControlsRef = useRef(setEnvironmentControls);
 
   const stopTimeline = useCallback(() => {
     timelineRef.current?.kill();
@@ -957,6 +1064,383 @@ export function TextDestructionExperience() {
     controls.target.copy(snapshot.cameraTarget);
     controls.update();
   }, [stopTimeline]);
+
+  const applyLookPreset = useCallback(
+    (preset: LookPreset) => {
+      stopTimeline();
+      setTimelineEnabled(false);
+      setTimelinePlaying(false);
+      timelineDistortionOverrideRef.current = null;
+
+      if (preset === "Mono Brutalist") {
+        setDistortionControlsRef.current({
+          noiseAmplitude: 1.25,
+          noiseFrequency: 0.46,
+          noiseSpeed: 0.85,
+          followRate: 18,
+          radius: 0.62,
+          explodeAmplitude: 1.7,
+          rotationAmplitude: 0.8,
+          characterMode: "Crunch",
+          characterStrength: 1.35,
+          spring: 0.058,
+          friction: 0.885,
+          idleMix: 0,
+          color: "#ecece6",
+          emissive: "#f8f8f4",
+          emissiveIntensity: 0.58,
+          emissiveVelocityBoost: 6.8,
+          roughness: 0.82,
+          metalness: 0.06,
+          wireframe: false,
+        });
+
+        setAutomationControlsRef.current({
+          mode: "BPM Buzz",
+          intensity: 0.75,
+          pointerZOffset: 0.02,
+          bpm: 122,
+          stepsPerBeat: 1,
+          buzzFraction: 0.42,
+          spreadX: 0.88,
+          spreadY: 0.68,
+          centerBias: 0.58,
+          travelPortion: 0.28,
+        });
+
+        setPostFxControlsRef.current({
+          enabled: true,
+          bloomEnabled: true,
+          bloomIntensity: 0.78,
+          bloomThreshold: 0.28,
+          bloomSmoothing: 0.64,
+          dofEnabled: false,
+          motionBlurEnabled: false,
+          trailEnabled: true,
+          trailStrength: 0.0048,
+          trailDispersion: 0.18,
+          trailSamples: 8,
+          trailOpacity: 0.33,
+          brutalistCompositeEnabled: true,
+          brutalistPosterizeSteps: 4,
+          brutalistEdgeStrength: 2.35,
+          brutalistDitherStrength: 0.12,
+          brutalistGrain: 0.07,
+          brutalistWarp: 0.04,
+          brutalistOpacity: 0.82,
+          pixelationEnabled: true,
+          pixelationGranularity: 2,
+          scanlineEnabled: true,
+          scanlineDensity: 1.95,
+          scanlineOpacity: 0.35,
+          colorDepthEnabled: true,
+          colorDepthBits: 8,
+          glitchEnabled: false,
+          chromaticEnabled: false,
+          noiseEnabled: true,
+          noiseOpacity: 0.17,
+          vignetteEnabled: true,
+          vignetteOffset: 0.24,
+          vignetteDarkness: 1.2,
+        });
+
+        setEnvironmentControlsRef.current({
+          backgroundColor: "#0e0e0d",
+          fogEnabled: true,
+          fogColor: "#161614",
+          fogNear: 8.8,
+          fogFar: 29,
+          fogDensity: 0.06,
+          groundEnabled: false,
+        });
+
+        return;
+      }
+
+      if (preset === "Wireframe Acid") {
+        setDistortionControlsRef.current({
+          noiseAmplitude: 2.3,
+          noiseFrequency: 0.74,
+          noiseSpeed: 1.45,
+          followRate: 18,
+          radius: 0.52,
+          explodeAmplitude: 1.95,
+          rotationAmplitude: 1.4,
+          characterMode: "Shear",
+          characterStrength: 1.45,
+          spring: 0.048,
+          friction: 0.894,
+          idleMix: 0,
+          color: "#a9ff4f",
+          emissive: "#6aff00",
+          emissiveIntensity: 1.55,
+          emissiveVelocityBoost: 11.6,
+          roughness: 0.42,
+          metalness: 0.48,
+          wireframe: true,
+        });
+
+        setAutomationControlsRef.current({
+          mode: "BPM Buzz",
+          intensity: 1,
+          pointerZOffset: 0.02,
+          bpm: 144,
+          stepsPerBeat: 2,
+          buzzFraction: 0.56,
+          spreadX: 1.1,
+          spreadY: 0.9,
+          centerBias: 0.35,
+          travelPortion: 0.2,
+        });
+
+        setPostFxControlsRef.current({
+          enabled: true,
+          bloomEnabled: true,
+          bloomIntensity: 2.2,
+          bloomThreshold: 0.18,
+          bloomSmoothing: 0.72,
+          dofEnabled: false,
+          motionBlurEnabled: false,
+          trailEnabled: true,
+          trailStrength: 0.011,
+          trailDispersion: 0.62,
+          trailSamples: 13,
+          trailOpacity: 0.52,
+          brutalistCompositeEnabled: true,
+          brutalistPosterizeSteps: 6,
+          brutalistEdgeStrength: 1.9,
+          brutalistDitherStrength: 0.26,
+          brutalistGrain: 0.06,
+          brutalistWarp: 0.34,
+          brutalistOpacity: 0.55,
+          pixelationEnabled: false,
+          scanlineEnabled: true,
+          scanlineDensity: 2.7,
+          scanlineOpacity: 0.26,
+          colorDepthEnabled: false,
+          glitchEnabled: true,
+          glitchMode: "Constant Wild",
+          glitchDelayMin: 0.2,
+          glitchDelayMax: 0.6,
+          glitchDurationMin: 0.06,
+          glitchDurationMax: 0.12,
+          glitchStrengthX: 0.58,
+          glitchStrengthY: 0.92,
+          glitchRatio: 0.68,
+          chromaticEnabled: true,
+          chromaticOffsetX: 0.0028,
+          chromaticOffsetY: 0.0022,
+          noiseEnabled: true,
+          noiseOpacity: 0.19,
+          vignetteEnabled: true,
+          vignetteOffset: 0.15,
+          vignetteDarkness: 1.35,
+        });
+
+        setEnvironmentControlsRef.current({
+          backgroundColor: "#031003",
+          fogEnabled: true,
+          fogColor: "#092709",
+          fogNear: 9.8,
+          fogFar: 33,
+          fogDensity: 0.08,
+          groundEnabled: true,
+          groundColor: "#041404",
+          groundRoughness: 0.9,
+          groundMetalness: 0.1,
+        });
+
+        return;
+      }
+
+      if (preset === "Xerox Collapse") {
+        setDistortionControlsRef.current({
+          noiseAmplitude: 2.05,
+          noiseFrequency: 0.69,
+          noiseSpeed: 0.74,
+          followRate: 18,
+          radius: 0.78,
+          explodeAmplitude: 1.82,
+          rotationAmplitude: 0.62,
+          characterMode: "Melt",
+          characterStrength: 1.55,
+          spring: 0.044,
+          friction: 0.902,
+          idleMix: 0,
+          color: "#f4f3ed",
+          emissive: "#fefef9",
+          emissiveIntensity: 0.5,
+          emissiveVelocityBoost: 4.2,
+          roughness: 0.91,
+          metalness: 0.03,
+          wireframe: false,
+        });
+
+        setAutomationControlsRef.current({
+          mode: "Sweep",
+          intensity: 0.88,
+          pointerZOffset: 0.02,
+          sweepCycleSeconds: 9.4,
+          sweepWidth: 0.82,
+          sweepCurve: 0.36,
+          sweepBob: 0.1,
+          sweepBobFrequency: 1.2,
+          sweepDepth: 0.06,
+        });
+
+        setPostFxControlsRef.current({
+          enabled: true,
+          bloomEnabled: true,
+          bloomIntensity: 0.35,
+          bloomThreshold: 0.39,
+          bloomSmoothing: 0.68,
+          dofEnabled: false,
+          motionBlurEnabled: false,
+          trailEnabled: false,
+          brutalistCompositeEnabled: true,
+          brutalistPosterizeSteps: 5,
+          brutalistEdgeStrength: 2.4,
+          brutalistDitherStrength: 0.34,
+          brutalistGrain: 0.11,
+          brutalistWarp: 0.06,
+          brutalistOpacity: 0.88,
+          pixelationEnabled: true,
+          pixelationGranularity: 4,
+          scanlineEnabled: true,
+          scanlineDensity: 1.6,
+          scanlineOpacity: 0.29,
+          colorDepthEnabled: true,
+          colorDepthBits: 6,
+          glitchEnabled: true,
+          glitchMode: "Sporadic",
+          glitchDelayMin: 1.3,
+          glitchDelayMax: 2.8,
+          glitchDurationMin: 0.07,
+          glitchDurationMax: 0.15,
+          glitchStrengthX: 0.18,
+          glitchStrengthY: 0.34,
+          glitchRatio: 0.92,
+          chromaticEnabled: false,
+          noiseEnabled: true,
+          noiseOpacity: 0.23,
+          vignetteEnabled: true,
+          vignetteOffset: 0.32,
+          vignetteDarkness: 1.46,
+        });
+
+        setEnvironmentControlsRef.current({
+          backgroundColor: "#1a1916",
+          fogEnabled: true,
+          fogColor: "#24211c",
+          fogNear: 7.5,
+          fogFar: 26,
+          fogDensity: 0.072,
+          groundEnabled: true,
+          groundColor: "#0d0c0a",
+          groundRoughness: 1,
+          groundMetalness: 0,
+        });
+
+        return;
+      }
+
+      setDistortionControlsRef.current({
+        noiseAmplitude: 1.9,
+        noiseFrequency: 0.53,
+        noiseSpeed: 1.18,
+        followRate: 18,
+        radius: 0.56,
+        explodeAmplitude: 1.92,
+        rotationAmplitude: 1.3,
+        characterMode: "Rip",
+        characterStrength: 1.2,
+        spring: 0.055,
+        friction: 0.892,
+        idleMix: 0,
+        color: "#f0f5ff",
+        emissive: "#2a62ff",
+        emissiveIntensity: 1.18,
+        emissiveVelocityBoost: 9.2,
+        roughness: 0.3,
+        metalness: 0.28,
+        wireframe: false,
+      });
+
+      setAutomationControlsRef.current({
+        mode: "Sweep",
+        intensity: 1,
+        pointerZOffset: 0.02,
+        sweepCycleSeconds: 6.4,
+        sweepWidth: 0.97,
+        sweepCurve: 0.2,
+        sweepBob: 0.17,
+        sweepBobFrequency: 1.9,
+        sweepDepth: 0.16,
+      });
+
+      setPostFxControlsRef.current({
+        enabled: true,
+        bloomEnabled: true,
+        bloomIntensity: 1.95,
+        bloomThreshold: 0.18,
+        bloomSmoothing: 0.67,
+        dofEnabled: false,
+        motionBlurEnabled: false,
+        trailEnabled: true,
+        trailStrength: 0.0085,
+        trailDispersion: 0.42,
+        trailSamples: 12,
+        trailOpacity: 0.45,
+        brutalistCompositeEnabled: true,
+        brutalistPosterizeSteps: 7,
+        brutalistEdgeStrength: 1.4,
+        brutalistDitherStrength: 0.22,
+        brutalistGrain: 0.05,
+        brutalistWarp: 0.2,
+        brutalistOpacity: 0.58,
+        pixelationEnabled: false,
+        scanlineEnabled: false,
+        colorDepthEnabled: false,
+        glitchEnabled: false,
+        chromaticEnabled: true,
+        chromaticOffsetX: 0.0017,
+        chromaticOffsetY: 0.0014,
+        noiseEnabled: true,
+        noiseOpacity: 0.14,
+        vignetteEnabled: true,
+        vignetteOffset: 0.22,
+        vignetteDarkness: 1.08,
+      });
+
+      setEnvironmentControlsRef.current({
+        backgroundColor: "#050810",
+        fogEnabled: true,
+        fogColor: "#070e19",
+        fogNear: 10.5,
+        fogFar: 34,
+        fogDensity: 0.052,
+        groundEnabled: false,
+      });
+    },
+    [stopTimeline],
+  );
+
+  useControls(
+    "Look Presets",
+    () => ({
+      preset: {
+        value: "Neon Fracture",
+        options: LOOK_PRESET_OPTIONS,
+        onChange: (value: string) => {
+          lookPresetRef.current = asLookPreset(value);
+        },
+      },
+      apply: button(() => {
+        applyLookPreset(lookPresetRef.current);
+      }),
+    }),
+    [applyLookPreset],
+  );
 
   const [timelineControls] = useControls(
     "Timeline",
@@ -1123,6 +1607,14 @@ export function TextDestructionExperience() {
   useEffect(() => {
     setPostFxControlsRef.current = setPostFxControls;
   }, [setPostFxControls]);
+
+  useEffect(() => {
+    setAutomationControlsRef.current = setAutomationControls;
+  }, [setAutomationControls]);
+
+  useEffect(() => {
+    setEnvironmentControlsRef.current = setEnvironmentControls;
+  }, [setEnvironmentControls]);
 
   useEffect(() => {
     const controls = orbitControlsRef.current;
@@ -1428,26 +1920,12 @@ export function TextDestructionExperience() {
       roughness: distortionControls.roughness,
       metalness: distortionControls.metalness,
       wireframe: distortionControls.wireframe,
+      characterMode: asDistortionCharacterMode(
+        String(distortionControls.characterMode),
+      ),
+      characterStrength: distortionControls.characterStrength,
     }),
-    [
-      distortionControls.emissiveVelocityBoost,
-      distortionControls.color,
-      distortionControls.explodeAmplitude,
-      distortionControls.emissive,
-      distortionControls.emissiveIntensity,
-      distortionControls.friction,
-      distortionControls.followRate,
-      distortionControls.idleMix,
-      distortionControls.metalness,
-      distortionControls.noiseAmplitude,
-      distortionControls.noiseFrequency,
-      distortionControls.noiseSpeed,
-      distortionControls.radius,
-      distortionControls.rotationAmplitude,
-      distortionControls.roughness,
-      distortionControls.spring,
-      distortionControls.wireframe,
-    ],
+    [distortionControls],
   );
 
   const distortionAutomation: DistortionAutomationSettings = useMemo(() => {
@@ -1474,26 +1952,7 @@ export function TextDestructionExperience() {
       centerBias: automationControls.centerBias,
       travelPortion: automationControls.travelPortion,
     };
-  }, [
-    automationControls.bpm,
-    automationControls.buzzAttack,
-    automationControls.buzzFraction,
-    automationControls.buzzRelease,
-    automationControls.centerBias,
-    automationControls.intensity,
-    automationControls.mode,
-    automationControls.pointerZOffset,
-    automationControls.spreadX,
-    automationControls.spreadY,
-    automationControls.stepsPerBeat,
-    automationControls.sweepBob,
-    automationControls.sweepBobFrequency,
-    automationControls.sweepCurve,
-    automationControls.sweepCycleSeconds,
-    automationControls.sweepDepth,
-    automationControls.sweepWidth,
-    automationControls.travelPortion,
-  ]);
+  }, [automationControls]);
 
   const renderedText = textControls.autoRegen ? draftText : manualRenderedText;
   const fogMode = asFogMode(String(environmentControls.fogMode));
@@ -1513,6 +1972,33 @@ export function TextDestructionExperience() {
 
   const postFxChildren = useMemo(() => {
     const children: ReactElement[] = [];
+
+    const glitchDelayMin = Math.min(
+      postFxControls.glitchDelayMin,
+      postFxControls.glitchDelayMax,
+    );
+    const glitchDelayMax = Math.max(
+      postFxControls.glitchDelayMin,
+      postFxControls.glitchDelayMax,
+    );
+    const glitchDurationMin = Math.min(
+      postFxControls.glitchDurationMin,
+      postFxControls.glitchDurationMax,
+    );
+    const glitchDurationMax = Math.max(
+      postFxControls.glitchDurationMin,
+      postFxControls.glitchDurationMax,
+    );
+    const glitchDelay = new Vector2(glitchDelayMin, glitchDelayMax);
+    const glitchDuration = new Vector2(glitchDurationMin, glitchDurationMax);
+    const glitchStrength = new Vector2(
+      postFxControls.glitchStrengthX,
+      postFxControls.glitchStrengthY,
+    );
+    const glitchChromaticOffset = new Vector2(
+      postFxControls.glitchChromaticX,
+      postFxControls.glitchChromaticY,
+    );
 
     if (postFxControls.bloomEnabled) {
       children.push(
@@ -1554,9 +2040,63 @@ export function TextDestructionExperience() {
       );
     }
 
+    if (postFxControls.trailEnabled) {
+      children.push(
+        <TemporalFeedbackTrail
+          key="trail"
+          strength={postFxControls.trailStrength}
+          dispersion={postFxControls.trailDispersion}
+          samples={postFxControls.trailSamples}
+          opacity={postFxControls.trailOpacity}
+        />,
+      );
+    }
+
     if (postFxControls.chromaticEnabled) {
       children.push(
         <ChromaticAberration key="chromatic" offset={chromaticOffset} />,
+      );
+    }
+
+    if (postFxControls.glitchEnabled) {
+      children.push(
+        <Glitch
+          key="glitch"
+          mode={asGlitchMode(String(postFxControls.glitchMode))}
+          delay={glitchDelay}
+          duration={glitchDuration}
+          strength={glitchStrength}
+          chromaticAberrationOffset={glitchChromaticOffset}
+          ratio={postFxControls.glitchRatio}
+        />,
+      );
+    }
+
+    if (postFxControls.pixelationEnabled) {
+      children.push(
+        <Pixelation
+          key="pixelation"
+          granularity={postFxControls.pixelationGranularity}
+        />,
+      );
+    }
+
+    if (postFxControls.colorDepthEnabled) {
+      children.push(
+        <ColorDepth
+          key="color-depth"
+          bits={Math.round(postFxControls.colorDepthBits)}
+        />,
+      );
+    }
+
+    if (postFxControls.scanlineEnabled) {
+      children.push(
+        <Scanline
+          key="scanline"
+          density={postFxControls.scanlineDensity}
+          opacity={postFxControls.scanlineOpacity}
+        />,
       );
     }
 
@@ -1566,6 +2106,20 @@ export function TextDestructionExperience() {
           key="noise"
           blendFunction={BlendFunction.OVERLAY}
           opacity={postFxControls.noiseOpacity}
+        />,
+      );
+    }
+
+    if (postFxControls.brutalistCompositeEnabled) {
+      children.push(
+        <BrutalistCompositeFx
+          key="brutalist-composite"
+          posterizeSteps={postFxControls.brutalistPosterizeSteps}
+          edgeStrength={postFxControls.brutalistEdgeStrength}
+          ditherStrength={postFxControls.brutalistDitherStrength}
+          grain={postFxControls.brutalistGrain}
+          warp={postFxControls.brutalistWarp}
+          opacity={postFxControls.brutalistOpacity}
         />,
       );
     }
@@ -1582,31 +2136,7 @@ export function TextDestructionExperience() {
     }
 
     return children;
-  }, [
-    chromaticOffset,
-    postFxControls.bloomEnabled,
-    postFxControls.bloomIntensity,
-    postFxControls.bloomSmoothing,
-    postFxControls.bloomThreshold,
-    postFxControls.chromaticEnabled,
-    postFxControls.dofAutoFocusText,
-    postFxControls.dofBokehScale,
-    postFxControls.dofEnabled,
-    postFxControls.dofFocusDistance,
-    postFxControls.dofFocusRange,
-    postFxControls.dofResolutionScale,
-    postFxControls.motionBlurDirectionX,
-    postFxControls.motionBlurDirectionY,
-    postFxControls.motionBlurEnabled,
-    postFxControls.motionBlurOpacity,
-    postFxControls.motionBlurSamples,
-    postFxControls.motionBlurStrength,
-    postFxControls.noiseEnabled,
-    postFxControls.noiseOpacity,
-    postFxControls.vignetteDarkness,
-    postFxControls.vignetteEnabled,
-    postFxControls.vignetteOffset,
-  ]);
+  }, [chromaticOffset, postFxControls]);
 
   const meshKey = useMemo(
     () =>
