@@ -1,35 +1,39 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { Canvas } from "@react-three/fiber";
+import { Leva } from "leva";
+import { Suspense } from "react";
+
+import { TextDestructionExperience } from "./scene/TextDestructionExperience";
+import "./App.css";
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <div className="app-shell">
+      <Canvas
+        className="app-canvas"
+        dpr={[1, 2]}
+        gl={{
+          antialias: true,
+          alpha: false,
+          powerPreference: "high-performance",
+          preserveDrawingBuffer: true,
+        }}
+        camera={{ position: [0, 0.15, 9], fov: 42, near: 0.1, far: 120 }}
+      >
+        <color attach="background" args={["#080b12"]} />
+        <fog attach="fog" args={["#080b12", 12, 34]} />
+        <Suspense fallback={null}>
+          <TextDestructionExperience />
+        </Suspense>
+      </Canvas>
+
+      {/* <aside className="app-hud" aria-hidden>
+        <h1>Type Collapse</h1>
+        <p>Hover text to inject impact. Click text to pause/resume. Drag to orbit.</p>
+      </aside> */}
+
+      <Leva collapsed={false} oneLineLabels={false} hideCopyButton />
+    </div>
+  );
 }
 
-export default App
+export default App;
