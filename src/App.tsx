@@ -13,14 +13,12 @@ function App() {
         dpr={[1, 2]}
         gl={{
           antialias: true,
-          alpha: false,
+          alpha: true,
           powerPreference: "high-performance",
           preserveDrawingBuffer: true,
         }}
         camera={{ position: [0, 0.15, 9], fov: 42, near: 0.1, far: 120 }}
       >
-        <color attach="background" args={["#080b12"]} />
-        <fog attach="fog" args={["#080b12", 12, 34]} />
         <Suspense fallback={null}>
           <TextDestructionExperience />
         </Suspense>

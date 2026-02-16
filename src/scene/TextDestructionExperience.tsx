@@ -1,4 +1,4 @@
-import { OrbitControls } from '@react-three/drei'
+import { OrbitControls } from "@react-three/drei";
 import {
   Bloom,
   ChromaticAberration,
@@ -6,10 +6,10 @@ import {
   EffectComposer,
   Noise,
   Vignette,
-} from '@react-three/postprocessing'
-import { button, useControls } from 'leva'
-import gsap from 'gsap'
-import { BlendFunction } from 'postprocessing'
+} from "@react-three/postprocessing";
+import { button, useControls } from "leva";
+import gsap from "gsap";
+import { BlendFunction } from "postprocessing";
 import {
   useCallback,
   useEffect,
@@ -17,77 +17,131 @@ import {
   useRef,
   useState,
   type ReactElement,
-} from 'react'
-import { PerspectiveCamera, Quaternion, Vector2, Vector3 } from 'three'
-import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+} from "react";
+import { PerspectiveCamera, Quaternion, Vector2, Vector3 } from "three";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 
-import { DEFAULT_FONT, DEFAULT_TEXT, FONT_OPTIONS } from '../data/fonts'
-import { useScreenshotExport } from '../hooks/useScreenshotExport'
-import { ElasticText, type DistortionSettings } from './ElasticText'
-import { CinematicMotionBlur } from './effects/CinematicMotionBlur'
+import { DEFAULT_FONT, DEFAULT_TEXT, FONT_OPTIONS } from "../data/fonts";
+import { useScreenshotExport } from "../hooks/useScreenshotExport";
+import {
+  ElasticText,
+  type DistortionAutomationMode,
+  type DistortionAutomationSettings,
+  type DistortionSettings,
+} from "./ElasticText";
+import { CinematicMotionBlur } from "./effects/CinematicMotionBlur";
 
 type TimelineSnapshot = {
-  cameraPosition: Vector3
-  cameraTarget: Vector3
-  cameraFov: number
+  cameraPosition: Vector3;
+  cameraTarget: Vector3;
+  cameraFov: number;
   distortion: {
-    noiseAmplitude: number
-    explodeAmplitude: number
-    rotationAmplitude: number
-    spring: number
-    friction: number
-    emissiveVelocityBoost: number
-  }
+    noiseAmplitude: number;
+    explodeAmplitude: number;
+    rotationAmplitude: number;
+    spring: number;
+    friction: number;
+    emissiveVelocityBoost: number;
+  };
   postFx: {
-    bloomIntensity: number
-    chromaticOffsetX: number
-    chromaticOffsetY: number
-    noiseOpacity: number
-    dofBokehScale: number
-    motionBlurStrength: number
-  }
-}
+    bloomIntensity: number;
+    chromaticOffsetX: number;
+    chromaticOffsetY: number;
+    noiseOpacity: number;
+    dofBokehScale: number;
+    motionBlurStrength: number;
+  };
+};
 
-const TIMELINE_PRESETS = ['Club Cuts', 'Cinematic Drift', 'Hyper Zoom'] as const
+const TIMELINE_PRESETS = [
+  "Club Cuts",
+  "Cinematic Drift",
+  "Hyper Zoom",
+] as const;
 
-type TimelinePreset = (typeof TIMELINE_PRESETS)[number]
+type TimelinePreset = (typeof TIMELINE_PRESETS)[number];
 
 const TIMELINE_PRESET_OPTIONS = Object.fromEntries(
   TIMELINE_PRESETS.map((preset) => [preset, preset]),
-) as Record<TimelinePreset, TimelinePreset>
+) as Record<TimelinePreset, TimelinePreset>;
 
 function asTimelinePreset(value: string): TimelinePreset {
   return TIMELINE_PRESETS.includes(value as TimelinePreset)
     ? (value as TimelinePreset)
-    : 'Club Cuts'
+    : "Club Cuts";
+}
+
+const DISTORTION_AUTOMATION_MODE_OPTIONS: Record<
+  DistortionAutomationMode,
+  DistortionAutomationMode
+> = {
+  Off: "Off",
+  Sweep: "Sweep",
+  "BPM Buzz": "BPM Buzz",
+};
+
+const BPM_STEPS_OPTIONS: Record<string, number> = {
+  Quarter: 1,
+  Eighth: 2,
+  Sixteenth: 4,
+};
+
+type FogMode = "Linear" | "Exp2";
+
+const FOG_MODE_OPTIONS: Record<FogMode, FogMode> = {
+  Linear: "Linear",
+  Exp2: "Exp2",
+};
+
+function asDistortionAutomationMode(value: string): DistortionAutomationMode {
+  if (value === "Sweep" || value === "BPM Buzz" || value === "Off") {
+    return value;
+  }
+
+  return "Off";
+}
+
+function asFogMode(value: string): FogMode {
+  return value === "Exp2" ? "Exp2" : "Linear";
+}
+
+type ExportCaptureState = {
+  transparentBackground: boolean;
+  disableFog: boolean;
+};
+
+function waitForAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 }
 
 type CameraTrack = {
-  x: number
-  y: number
-  z: number
-  tx: number
-  ty: number
-  tz: number
-  fov: number
-  roll: number
-  shake: number
-}
+  x: number;
+  y: number;
+  z: number;
+  tx: number;
+  ty: number;
+  tz: number;
+  fov: number;
+  roll: number;
+  shake: number;
+};
 
 type CameraShot = {
-  cut: CameraTrack
-  move: Partial<CameraTrack>
-  duration: number
-  hold: number
-  ease?: string
-}
+  cut: CameraTrack;
+  move: Partial<CameraTrack>;
+  duration: number;
+  hold: number;
+  ease?: string;
+};
 
 function createCameraShots(
   preset: TimelinePreset,
   radiusScale: number,
   heightOffset: number,
 ): CameraShot[] {
-  if (preset === 'Cinematic Drift') {
+  if (preset === "Cinematic Drift") {
     return [
       {
         cut: {
@@ -114,7 +168,7 @@ function createCameraShots(
         },
         duration: 2.1,
         hold: 0.02,
-        ease: 'sine.inOut',
+        ease: "sine.inOut",
       },
       {
         cut: {
@@ -141,7 +195,7 @@ function createCameraShots(
         },
         duration: 1.35,
         hold: 0.02,
-        ease: 'expo.inOut',
+        ease: "expo.inOut",
       },
       {
         cut: {
@@ -168,7 +222,7 @@ function createCameraShots(
         },
         duration: 1.12,
         hold: 0.02,
-        ease: 'power2.inOut',
+        ease: "power2.inOut",
       },
       {
         cut: {
@@ -195,7 +249,7 @@ function createCameraShots(
         },
         duration: 1.92,
         hold: 0.02,
-        ease: 'sine.inOut',
+        ease: "sine.inOut",
       },
       {
         cut: {
@@ -222,12 +276,12 @@ function createCameraShots(
         },
         duration: 1.04,
         hold: 0.02,
-        ease: 'power2.inOut',
+        ease: "power2.inOut",
       },
-    ]
+    ];
   }
 
-  if (preset === 'Hyper Zoom') {
+  if (preset === "Hyper Zoom") {
     return [
       {
         cut: {
@@ -254,7 +308,7 @@ function createCameraShots(
         },
         duration: 0.56,
         hold: 0.02,
-        ease: 'power3.inOut',
+        ease: "power3.inOut",
       },
       {
         cut: {
@@ -281,7 +335,7 @@ function createCameraShots(
         },
         duration: 0.78,
         hold: 0.02,
-        ease: 'expo.inOut',
+        ease: "expo.inOut",
       },
       {
         cut: {
@@ -308,7 +362,7 @@ function createCameraShots(
         },
         duration: 0.54,
         hold: 0.02,
-        ease: 'power2.inOut',
+        ease: "power2.inOut",
       },
       {
         cut: {
@@ -335,7 +389,7 @@ function createCameraShots(
         },
         duration: 1.48,
         hold: 0.02,
-        ease: 'sine.inOut',
+        ease: "sine.inOut",
       },
       {
         cut: {
@@ -362,7 +416,7 @@ function createCameraShots(
         },
         duration: 0.62,
         hold: 0.02,
-        ease: 'power3.inOut',
+        ease: "power3.inOut",
       },
       {
         cut: {
@@ -389,7 +443,7 @@ function createCameraShots(
         },
         duration: 0.62,
         hold: 0.02,
-        ease: 'power2.inOut',
+        ease: "power2.inOut",
       },
       {
         cut: {
@@ -416,9 +470,9 @@ function createCameraShots(
         },
         duration: 1.74,
         hold: 0.02,
-        ease: 'sine.inOut',
+        ease: "sine.inOut",
       },
-    ]
+    ];
   }
 
   return [
@@ -447,7 +501,7 @@ function createCameraShots(
       },
       duration: 0.72,
       hold: 0.02,
-      ease: 'power2.inOut',
+      ease: "power2.inOut",
     },
     {
       cut: {
@@ -474,7 +528,7 @@ function createCameraShots(
       },
       duration: 0.9,
       hold: 0.02,
-      ease: 'expo.inOut',
+      ease: "expo.inOut",
     },
     {
       cut: {
@@ -501,7 +555,7 @@ function createCameraShots(
       },
       duration: 1.68,
       hold: 0.02,
-      ease: 'sine.inOut',
+      ease: "sine.inOut",
     },
     {
       cut: {
@@ -528,7 +582,7 @@ function createCameraShots(
       },
       duration: 0.58,
       hold: 0.02,
-      ease: 'power3.inOut',
+      ease: "power3.inOut",
     },
     {
       cut: {
@@ -555,7 +609,7 @@ function createCameraShots(
       },
       duration: 0.68,
       hold: 0.02,
-      ease: 'power3.inOut',
+      ease: "power3.inOut",
     },
     {
       cut: {
@@ -582,7 +636,7 @@ function createCameraShots(
       },
       duration: 0.96,
       hold: 0.02,
-      ease: 'sine.inOut',
+      ease: "sine.inOut",
     },
     {
       cut: {
@@ -609,7 +663,7 @@ function createCameraShots(
       },
       duration: 1.95,
       hold: 0.02,
-      ease: 'sine.inOut',
+      ease: "sine.inOut",
     },
     {
       cut: {
@@ -636,7 +690,7 @@ function createCameraShots(
       },
       duration: 0.64,
       hold: 0.02,
-      ease: 'power2.inOut',
+      ease: "power2.inOut",
     },
     {
       cut: {
@@ -663,57 +717,97 @@ function createCameraShots(
       },
       duration: 0.88,
       hold: 0.02,
-      ease: 'power2.inOut',
+      ease: "power2.inOut",
     },
-  ]
+  ];
 }
 
 function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value))
+  return Math.min(max, Math.max(min, value));
 }
 
 export function TextDestructionExperience() {
-  const [paused, setPaused] = useState(false)
-  const [seed, setSeed] = useState(() => Math.random() * 1000)
-  const [manualRenderedText, setManualRenderedText] = useState(DEFAULT_TEXT)
-  const [timelinePlaying, setTimelinePlaying] = useState(false)
-  const [timelineEnabled, setTimelineEnabled] = useState(false)
+  const [paused, setPaused] = useState(false);
+  const [seed, setSeed] = useState(() => Math.random() * 1000);
+  const [manualRenderedText, setManualRenderedText] = useState(DEFAULT_TEXT);
+  const [timelinePlaying, setTimelinePlaying] = useState(false);
+  const [timelineEnabled, setTimelineEnabled] = useState(false);
+  const [exportCaptureState, setExportCaptureState] =
+    useState<ExportCaptureState>({
+      transparentBackground: false,
+      disableFog: false,
+    });
 
-  const draftTextRef = useRef(DEFAULT_TEXT)
-  const exportScaleRef = useRef(2)
-  const orbitControlsRef = useRef<OrbitControlsImpl>(null)
-  const timelineRef = useRef<gsap.core.Timeline | null>(null)
-  const timelineSnapshotRef = useRef<TimelineSnapshot | null>(null)
-  const timelineAutoPlayRef = useRef(true)
-  const timelineDistortionOverrideRef = useRef<
-    Partial<DistortionSettings> | null
-  >(null)
-  const exportScreenshot = useScreenshotExport()
+  const draftTextRef = useRef(DEFAULT_TEXT);
+  const exportScaleRef = useRef(2);
+  const exportTransparentRef = useRef(false);
+  const exportDisableFogRef = useRef(true);
+  const exportSequenceDurationRef = useRef(4);
+  const exportSequenceFpsRef = useRef(24);
+  const exportSequencePaddingRef = useRef(4);
+  const exportSequencePrefixRef = useRef("type-collapse-seq");
+  const orbitControlsRef = useRef<OrbitControlsImpl>(null);
+  const timelineRef = useRef<gsap.core.Timeline | null>(null);
+  const timelineSnapshotRef = useRef<TimelineSnapshot | null>(null);
+  const timelineAutoPlayRef = useRef(true);
+  const timelineDistortionOverrideRef =
+    useRef<Partial<DistortionSettings> | null>(null);
+  const { exportScreenshot, exportSequence } = useScreenshotExport();
 
   const togglePause = useCallback(() => {
-    setPaused((current) => !current)
-  }, [])
+    setPaused((current) => !current);
+  }, []);
 
   const randomizeSeed = useCallback(() => {
-    setSeed(Math.random() * 1000)
-  }, [])
+    setSeed(Math.random() * 1000);
+  }, []);
 
   const regenerateText = useCallback(() => {
-    const nextText = draftTextRef.current.trim().replace(/\s+/g, ' ')
-    setManualRenderedText(nextText.length > 0 ? nextText : DEFAULT_TEXT)
-  }, [])
+    const nextText = draftTextRef.current.trim().replace(/\s+/g, " ");
+    setManualRenderedText(nextText.length > 0 ? nextText : DEFAULT_TEXT);
+  }, []);
+
+  const beginExportCapture = useCallback(
+    async (transparentBackground: boolean) => {
+      if (!transparentBackground) {
+        return;
+      }
+
+      setExportCaptureState({
+        transparentBackground: true,
+        disableFog: exportDisableFogRef.current,
+      });
+      await waitForAnimationFrame();
+    },
+    [],
+  );
+
+  const endExportCapture = useCallback(
+    async (transparentBackground: boolean) => {
+      if (!transparentBackground) {
+        return;
+      }
+
+      setExportCaptureState({
+        transparentBackground: false,
+        disableFog: false,
+      });
+      await waitForAnimationFrame();
+    },
+    [],
+  );
 
   useControls(
-    'Playback',
+    "Playback",
     () => ({
       pauseOrResume: button(() => togglePause()),
       randomizeSeed: button(() => randomizeSeed()),
     }),
     [togglePause, randomizeSeed],
-  )
+  );
 
   const [textControls] = useControls(
-    'Text',
+    "Text",
     () => ({
       content: { value: DEFAULT_TEXT },
       autoRegen: true,
@@ -727,10 +821,10 @@ export function TextDestructionExperience() {
       regen: button(() => regenerateText()),
     }),
     [regenerateText],
-  )
+  );
 
   const [distortionControls, setDistortionControls] = useControls(
-    'Distortion',
+    "Distortion",
     () => ({
       noiseAmplitude: { value: 1.6, min: 0, max: 4, step: 0.01 },
       noiseFrequency: { value: 0.5, min: 0.05, max: 4, step: 0.01 },
@@ -742,8 +836,8 @@ export function TextDestructionExperience() {
       spring: { value: 0.05, min: 0.001, max: 0.2, step: 0.001 },
       friction: { value: 0.9, min: 0.5, max: 0.999, step: 0.001 },
       idleMix: { value: 0.0, min: 0, max: 0.5, step: 0.001 },
-      color: '#f0f5ff',
-      emissive: '#0b55c7',
+      color: "#f0f5ff",
+      emissive: "#0b55c7",
       emissiveIntensity: { value: 0.75, min: 0, max: 3, step: 0.01 },
       emissiveVelocityBoost: { value: 5.0, min: 0, max: 20, step: 0.1 },
       roughness: { value: 0.24, min: 0, max: 1, step: 0.01 },
@@ -751,10 +845,35 @@ export function TextDestructionExperience() {
       wireframe: false,
     }),
     [],
-  )
+  );
+
+  const [automationControls] = useControls(
+    "Distortion Automation",
+    () => ({
+      mode: { value: "Sweep", options: DISTORTION_AUTOMATION_MODE_OPTIONS },
+      intensity: { value: 1, min: 0, max: 1, step: 0.01 },
+      pointerZOffset: { value: 0.02, min: -1.5, max: 1.5, step: 0.01 },
+      sweepCycleSeconds: { value: 6.4, min: 1.5, max: 30, step: 0.1 },
+      sweepWidth: { value: 0.95, min: 0.1, max: 1.3, step: 0.01 },
+      sweepCurve: { value: 0.18, min: -0.6, max: 0.8, step: 0.01 },
+      sweepBob: { value: 0.14, min: 0, max: 1, step: 0.01 },
+      sweepBobFrequency: { value: 2.0, min: 0.1, max: 8, step: 0.01 },
+      sweepDepth: { value: 0.1, min: 0, max: 1, step: 0.01 },
+      bpm: { value: 130, min: 40, max: 240, step: 1 },
+      stepsPerBeat: { value: 1, options: BPM_STEPS_OPTIONS },
+      buzzFraction: { value: 0.5, min: 0.05, max: 1, step: 0.01 },
+      buzzAttack: { value: 0.08, min: 0.01, max: 0.49, step: 0.01 },
+      buzzRelease: { value: 0.24, min: 0.01, max: 0.49, step: 0.01 },
+      spreadX: { value: 0.95, min: 0.05, max: 1.3, step: 0.01 },
+      spreadY: { value: 0.82, min: 0.05, max: 1.3, step: 0.01 },
+      centerBias: { value: 0.45, min: 0, max: 1, step: 0.01 },
+      travelPortion: { value: 0.22, min: 0.01, max: 1, step: 0.01 },
+    }),
+    [],
+  );
 
   const [postFxControls, setPostFxControls] = useControls(
-    'Post FX',
+    "Post FX",
     () => ({
       enabled: true,
       bloomEnabled: true,
@@ -783,73 +902,93 @@ export function TextDestructionExperience() {
       vignetteDarkness: { value: 0.9, min: 0, max: 2, step: 0.01 },
     }),
     [],
-  )
-  const distortionControlsRef = useRef(distortionControls)
-  const postFxControlsRef = useRef(postFxControls)
-  const setDistortionControlsRef = useRef(setDistortionControls)
-  const setPostFxControlsRef = useRef(setPostFxControls)
+  );
+
+  const [environmentControls] = useControls(
+    "Environment",
+    () => ({
+      backgroundColor: "#080b12",
+      fogEnabled: true,
+      fogMode: { value: "Linear", options: FOG_MODE_OPTIONS },
+      fogColor: "#080b12",
+      fogNear: { value: 12, min: 0.1, max: 120, step: 0.1 },
+      fogFar: { value: 34, min: 0.2, max: 240, step: 0.1 },
+      fogDensity: { value: 0.045, min: 0.001, max: 0.25, step: 0.001 },
+      groundEnabled: false,
+      groundColor: "#070d14",
+      groundY: { value: -2.8, min: -12, max: 4, step: 0.01 },
+      groundSize: { value: 90, min: 10, max: 300, step: 1 },
+      groundRoughness: { value: 0.95, min: 0, max: 1, step: 0.01 },
+      groundMetalness: { value: 0.05, min: 0, max: 1, step: 0.01 },
+    }),
+    [],
+  );
+  const distortionControlsRef = useRef(distortionControls);
+  const postFxControlsRef = useRef(postFxControls);
+  const setDistortionControlsRef = useRef(setDistortionControls);
+  const setPostFxControlsRef = useRef(setPostFxControls);
 
   const stopTimeline = useCallback(() => {
-    timelineRef.current?.kill()
-    timelineRef.current = null
-    timelineDistortionOverrideRef.current = null
-    setTimelinePlaying(false)
-  }, [])
+    timelineRef.current?.kill();
+    timelineRef.current = null;
+    timelineDistortionOverrideRef.current = null;
+    setTimelinePlaying(false);
+  }, []);
 
   const resetTimeline = useCallback(() => {
-    stopTimeline()
-    timelineDistortionOverrideRef.current = null
+    stopTimeline();
+    timelineDistortionOverrideRef.current = null;
 
-    const snapshot = timelineSnapshotRef.current
-    const controls = orbitControlsRef.current
+    const snapshot = timelineSnapshotRef.current;
+    const controls = orbitControlsRef.current;
 
     if (!snapshot || !controls) {
-      return
+      return;
     }
 
-    setDistortionControlsRef.current(snapshot.distortion)
-    setPostFxControlsRef.current(snapshot.postFx)
-    const activeCamera = controls.object
-    activeCamera.position.copy(snapshot.cameraPosition)
+    setDistortionControlsRef.current(snapshot.distortion);
+    setPostFxControlsRef.current(snapshot.postFx);
+    const activeCamera = controls.object;
+    activeCamera.position.copy(snapshot.cameraPosition);
     if (activeCamera instanceof PerspectiveCamera) {
-      activeCamera.fov = snapshot.cameraFov
-      activeCamera.updateProjectionMatrix()
+      activeCamera.fov = snapshot.cameraFov;
+      activeCamera.updateProjectionMatrix();
     }
-    controls.target.copy(snapshot.cameraTarget)
-    controls.update()
-  }, [stopTimeline])
+    controls.target.copy(snapshot.cameraTarget);
+    controls.update();
+  }, [stopTimeline]);
 
   const [timelineControls] = useControls(
-    'Timeline',
+    "Timeline",
     () => ({
       enabled: {
         value: false,
         onChange: (value: boolean) => {
-          setTimelineEnabled(value)
+          setTimelineEnabled(value);
 
           if (!value) {
-            timelineRef.current?.kill()
-            timelineRef.current = null
-            timelineDistortionOverrideRef.current = null
-            setTimelinePlaying(false)
-            return
+            timelineRef.current?.kill();
+            timelineRef.current = null;
+            timelineDistortionOverrideRef.current = null;
+            setTimelinePlaying(false);
+            return;
           }
 
           if (timelineAutoPlayRef.current) {
-            setTimelinePlaying(true)
+            setTimelinePlaying(true);
           }
         },
       },
       autoPlay: {
         value: true,
         onChange: (value: boolean) => {
-          timelineAutoPlayRef.current = value
+          timelineAutoPlayRef.current = value;
         },
       },
       loop: true,
       speed: { value: 1, min: 0.25, max: 2.5, step: 0.01 },
       sweepIntensity: { value: 1, min: 0.1, max: 2.5, step: 0.01 },
-      preset: { value: 'Club Cuts', options: TIMELINE_PRESET_OPTIONS },
+      preset: { value: "Club Cuts", options: TIMELINE_PRESET_OPTIONS },
       cameraRadius: { value: 9, min: 4, max: 18, step: 0.1 },
       cameraHeight: { value: 0.6, min: -1, max: 4, step: 0.01 },
       lockOrbitWhilePlaying: true,
@@ -858,96 +997,173 @@ export function TextDestructionExperience() {
       reset: button(() => resetTimeline()),
     }),
     [resetTimeline],
-  )
+  );
 
   useControls(
-    'Export',
+    "Export",
     () => ({
       resolution: {
         value: 2,
-        options: { '1x': 1, '2x': 2, '3x': 3 },
+        options: { "1x": 1, "2x": 2, "3x": 3, "4x": 4 },
         onChange: (value: number) => {
-          exportScaleRef.current = value
+          exportScaleRef.current = value;
+        },
+      },
+      transparentBackground: {
+        value: false,
+        onChange: (value: boolean) => {
+          exportTransparentRef.current = value;
+        },
+      },
+      disableFogInTransparent: {
+        value: true,
+        onChange: (value: boolean) => {
+          exportDisableFogRef.current = value;
+        },
+      },
+      sequenceDurationSeconds: {
+        value: 4,
+        min: 0.5,
+        max: 30,
+        step: 0.1,
+        onChange: (value: number) => {
+          exportSequenceDurationRef.current = value;
+        },
+      },
+      sequenceFps: {
+        value: 24,
+        min: 1,
+        max: 60,
+        step: 1,
+        onChange: (value: number) => {
+          exportSequenceFpsRef.current = value;
+        },
+      },
+      sequenceFramePadding: {
+        value: 4,
+        min: 2,
+        max: 8,
+        step: 1,
+        onChange: (value: number) => {
+          exportSequencePaddingRef.current = value;
+        },
+      },
+      sequencePrefix: {
+        value: "type-collapse-seq",
+        onChange: (value: string) => {
+          exportSequencePrefixRef.current = value;
         },
       },
       screenshot: button(() => {
-        void exportScreenshot(exportScaleRef.current)
+        const transparentBackground = exportTransparentRef.current;
+
+        void exportScreenshot({
+          scale: exportScaleRef.current,
+          transparentBackground,
+          filenamePrefix: "type-collapse",
+          onBeforeCapture: async () => {
+            await beginExportCapture(transparentBackground);
+          },
+          onAfterCapture: async () => {
+            await endExportCapture(transparentBackground);
+          },
+        });
+      }),
+      exportPngSequence: button(() => {
+        const transparentBackground = exportTransparentRef.current;
+        const prefix = exportSequencePrefixRef.current.trim();
+
+        void exportSequence({
+          scale: exportScaleRef.current,
+          transparentBackground,
+          filenamePrefix: prefix.length > 0 ? prefix : "type-collapse-seq",
+          durationSeconds: exportSequenceDurationRef.current,
+          fps: exportSequenceFpsRef.current,
+          framePadding: exportSequencePaddingRef.current,
+          onBeforeCapture: async () => {
+            await beginExportCapture(transparentBackground);
+          },
+          onAfterCapture: async () => {
+            await endExportCapture(transparentBackground);
+          },
+        });
       }),
     }),
-    [exportScreenshot],
-  )
+    [beginExportCapture, endExportCapture, exportScreenshot, exportSequence],
+  );
 
   useEffect(() => {
     return () => {
-      timelineRef.current?.kill()
-      timelineRef.current = null
-    }
-  }, [])
+      timelineRef.current?.kill();
+      timelineRef.current = null;
+    };
+  }, []);
 
   const draftText = useMemo(
-    () => textControls.content.trim().replace(/\s+/g, ' ') || DEFAULT_TEXT,
+    () => textControls.content.trim().replace(/\s+/g, " ") || DEFAULT_TEXT,
     [textControls.content],
-  )
+  );
 
   useEffect(() => {
-    draftTextRef.current = draftText
-  }, [draftText])
+    draftTextRef.current = draftText;
+  }, [draftText]);
 
   useEffect(() => {
-    distortionControlsRef.current = distortionControls
-  }, [distortionControls])
+    distortionControlsRef.current = distortionControls;
+  }, [distortionControls]);
 
   useEffect(() => {
-    postFxControlsRef.current = postFxControls
-  }, [postFxControls])
+    postFxControlsRef.current = postFxControls;
+  }, [postFxControls]);
 
   useEffect(() => {
-    setDistortionControlsRef.current = setDistortionControls
-  }, [setDistortionControls])
+    setDistortionControlsRef.current = setDistortionControls;
+  }, [setDistortionControls]);
 
   useEffect(() => {
-    setPostFxControlsRef.current = setPostFxControls
-  }, [setPostFxControls])
+    setPostFxControlsRef.current = setPostFxControls;
+  }, [setPostFxControls]);
 
   useEffect(() => {
-    const controls = orbitControlsRef.current
+    const controls = orbitControlsRef.current;
     if (!controls) {
-      return
+      return;
     }
 
     controls.enabled = !(
       timelineEnabled &&
       timelinePlaying &&
       timelineControls.lockOrbitWhilePlaying
-    )
+    );
   }, [
     timelineEnabled,
     timelineControls.lockOrbitWhilePlaying,
     timelinePlaying,
-  ])
+  ]);
 
   useEffect(() => {
-    const controls = orbitControlsRef.current
+    const controls = orbitControlsRef.current;
     if (!controls) {
-      return
+      return;
     }
 
     if (!timelineEnabled || !timelinePlaying) {
-      timelineRef.current?.pause()
-      timelineDistortionOverrideRef.current = null
-      return
+      timelineRef.current?.pause();
+      timelineDistortionOverrideRef.current = null;
+      return;
     }
 
-    timelineRef.current?.kill()
+    timelineRef.current?.kill();
 
-    const activeCamera = controls.object
-    const distortionState = distortionControlsRef.current
-    const postFxState = postFxControlsRef.current
+    const activeCamera = controls.object;
+    const distortionState = distortionControlsRef.current;
+    const postFxState = postFxControlsRef.current;
 
     const snapshot: TimelineSnapshot = {
       cameraPosition: activeCamera.position.clone(),
       cameraTarget: controls.target.clone(),
-      cameraFov: activeCamera instanceof PerspectiveCamera ? activeCamera.fov : 50,
+      cameraFov:
+        activeCamera instanceof PerspectiveCamera ? activeCamera.fov : 50,
       distortion: {
         noiseAmplitude: distortionState.noiseAmplitude,
         explodeAmplitude: distortionState.explodeAmplitude,
@@ -964,17 +1180,18 @@ export function TextDestructionExperience() {
         dofBokehScale: postFxState.dofBokehScale,
         motionBlurStrength: postFxState.motionBlurStrength,
       },
-    }
+    };
 
-    timelineSnapshotRef.current = snapshot
+    timelineSnapshotRef.current = snapshot;
 
     setPostFxControlsRef.current({
       dofEnabled: true,
       motionBlurEnabled: true,
-    })
+    });
 
-    const radiusScale = timelineControls.cameraRadius / 9
-    const heightOffset = timelineControls.cameraHeight - snapshot.cameraPosition.y
+    const radiusScale = timelineControls.cameraRadius / 9;
+    const heightOffset =
+      timelineControls.cameraHeight - snapshot.cameraPosition.y;
 
     const cameraTrack = {
       x: activeCamera.position.x,
@@ -986,7 +1203,7 @@ export function TextDestructionExperience() {
       fov: snapshot.cameraFov,
       roll: 0,
       shake: 0,
-    }
+    };
 
     const distortionTrack = {
       noiseAmplitude: snapshot.distortion.noiseAmplitude,
@@ -995,59 +1212,59 @@ export function TextDestructionExperience() {
       spring: snapshot.distortion.spring,
       friction: snapshot.distortion.friction,
       emissiveVelocityBoost: snapshot.distortion.emissiveVelocityBoost,
-    }
+    };
 
-    const baseQuaternion = new Quaternion()
-    const forwardAxis = new Vector3()
-    const rollQuaternion = new Quaternion()
+    const baseQuaternion = new Quaternion();
+    const forwardAxis = new Vector3();
+    const rollQuaternion = new Quaternion();
 
     const applyCamera = () => {
-      const time = performance.now() * 0.001
-      const shakeX = Math.sin(time * 43.7) * cameraTrack.shake
-      const shakeY = Math.cos(time * 57.9) * cameraTrack.shake * 0.7
-      const shakeZ = Math.sin(time * 51.2 + 1.3) * cameraTrack.shake * 0.55
+      const time = performance.now() * 0.001;
+      const shakeX = Math.sin(time * 43.7) * cameraTrack.shake;
+      const shakeY = Math.cos(time * 57.9) * cameraTrack.shake * 0.7;
+      const shakeZ = Math.sin(time * 51.2 + 1.3) * cameraTrack.shake * 0.55;
 
       activeCamera.position.set(
         cameraTrack.x + shakeX,
         cameraTrack.y + shakeY,
         cameraTrack.z + shakeZ,
-      )
+      );
       controls.target.set(
         cameraTrack.tx + shakeX * 0.18,
         cameraTrack.ty + shakeY * 0.2,
         cameraTrack.tz + shakeZ * 0.16,
-      )
+      );
       if (
         activeCamera instanceof PerspectiveCamera &&
         Math.abs(activeCamera.fov - cameraTrack.fov) > 0.0001
       ) {
-        activeCamera.fov = cameraTrack.fov
-        activeCamera.updateProjectionMatrix()
+        activeCamera.fov = cameraTrack.fov;
+        activeCamera.updateProjectionMatrix();
       }
-      controls.update()
+      controls.update();
 
       if (
         activeCamera instanceof PerspectiveCamera &&
         Math.abs(cameraTrack.roll) > 0.0001
       ) {
-        baseQuaternion.copy(activeCamera.quaternion)
-        forwardAxis.set(0, 0, -1).applyQuaternion(baseQuaternion).normalize()
-        rollQuaternion.setFromAxisAngle(forwardAxis, cameraTrack.roll)
-        activeCamera.quaternion.copy(baseQuaternion).multiply(rollQuaternion)
+        baseQuaternion.copy(activeCamera.quaternion);
+        forwardAxis.set(0, 0, -1).applyQuaternion(baseQuaternion).normalize();
+        rollQuaternion.setFromAxisAngle(forwardAxis, cameraTrack.roll);
+        activeCamera.quaternion.copy(baseQuaternion).multiply(rollQuaternion);
       }
-    }
+    };
 
-    const intensity = timelineControls.sweepIntensity
-    const speed = timelineControls.speed
+    const intensity = timelineControls.sweepIntensity;
+    const speed = timelineControls.speed;
     const shots = createCameraShots(
       asTimelinePreset(timelineControls.preset),
       radiusScale,
       heightOffset,
-    )
+    );
 
     const timeline = gsap.timeline({
       repeat: timelineControls.loop ? -1 : 0,
-      defaults: { ease: 'sine.inOut' },
+      defaults: { ease: "sine.inOut" },
       onUpdate: () => {
         timelineDistortionOverrideRef.current = {
           noiseAmplitude: distortionTrack.noiseAmplitude,
@@ -1056,14 +1273,14 @@ export function TextDestructionExperience() {
           spring: distortionTrack.spring,
           friction: distortionTrack.friction,
           emissiveVelocityBoost: distortionTrack.emissiveVelocityBoost,
-        }
-        applyCamera()
+        };
+        applyCamera();
       },
       onComplete: () => {
-        timelineDistortionOverrideRef.current = null
-        setTimelinePlaying(false)
+        timelineDistortionOverrideRef.current = null;
+        setTimelinePlaying(false);
       },
-    })
+    });
 
     timeline
       .to(
@@ -1106,15 +1323,39 @@ export function TextDestructionExperience() {
       .to(
         distortionTrack,
         {
-          noiseAmplitude: clamp(snapshot.distortion.noiseAmplitude * (1 + 0.25 * intensity), 0, 4),
-          explodeAmplitude: clamp(snapshot.distortion.explodeAmplitude * (1 + 0.1 * intensity), 0, 5),
-          rotationAmplitude: clamp(snapshot.distortion.rotationAmplitude * (1 + 0.15 * intensity), 0, 5),
-          spring: clamp(snapshot.distortion.spring * (1 + 0.08 * intensity), 0.001, 0.2),
-          friction: clamp(snapshot.distortion.friction - 0.02 * intensity, 0.5, 0.999),
-          emissiveVelocityBoost: clamp(snapshot.distortion.emissiveVelocityBoost * (1 + 0.2 * intensity), 0, 20),
+          noiseAmplitude: clamp(
+            snapshot.distortion.noiseAmplitude * (1 + 0.25 * intensity),
+            0,
+            4,
+          ),
+          explodeAmplitude: clamp(
+            snapshot.distortion.explodeAmplitude * (1 + 0.1 * intensity),
+            0,
+            5,
+          ),
+          rotationAmplitude: clamp(
+            snapshot.distortion.rotationAmplitude * (1 + 0.15 * intensity),
+            0,
+            5,
+          ),
+          spring: clamp(
+            snapshot.distortion.spring * (1 + 0.08 * intensity),
+            0.001,
+            0.2,
+          ),
+          friction: clamp(
+            snapshot.distortion.friction - 0.02 * intensity,
+            0.5,
+            0.999,
+          ),
+          emissiveVelocityBoost: clamp(
+            snapshot.distortion.emissiveVelocityBoost * (1 + 0.2 * intensity),
+            0,
+            20,
+          ),
           duration: 1.8 / speed,
         },
-        '>',
+        ">",
       )
       .to(
         distortionTrack,
@@ -1127,36 +1368,36 @@ export function TextDestructionExperience() {
           emissiveVelocityBoost: snapshot.distortion.emissiveVelocityBoost,
           duration: 2.2 / speed,
         },
-        '>',
-      )
+        ">",
+      );
 
-    let shotCursor = 0
+    let shotCursor = 0;
     for (const shot of shots) {
-      const shotDuration = shot.duration / speed
-      const holdDuration = shot.hold / speed
+      const shotDuration = shot.duration / speed;
+      const holdDuration = shot.hold / speed;
 
       timeline.set(cameraTrack, shot.cut, shotCursor).to(
         cameraTrack,
         {
           ...shot.move,
           duration: shotDuration,
-          ease: shot.ease ?? 'power2.inOut',
+          ease: shot.ease ?? "power2.inOut",
         },
         shotCursor,
-      )
+      );
 
-      shotCursor += shotDuration + holdDuration
+      shotCursor += shotDuration + holdDuration;
     }
 
-    timelineRef.current = timeline
+    timelineRef.current = timeline;
 
     return () => {
-      timeline.kill()
-      timelineDistortionOverrideRef.current = null
+      timeline.kill();
+      timelineDistortionOverrideRef.current = null;
       if (timelineRef.current === timeline) {
-        timelineRef.current = null
+        timelineRef.current = null;
       }
-    }
+    };
   }, [
     timelineEnabled,
     timelineControls.loop,
@@ -1166,7 +1407,7 @@ export function TextDestructionExperience() {
     timelineControls.speed,
     timelineControls.sweepIntensity,
     timelinePlaying,
-  ])
+  ]);
 
   const distortion: DistortionSettings = useMemo(
     () => ({
@@ -1207,17 +1448,71 @@ export function TextDestructionExperience() {
       distortionControls.spring,
       distortionControls.wireframe,
     ],
-  )
+  );
 
-  const renderedText = textControls.autoRegen ? draftText : manualRenderedText
+  const distortionAutomation: DistortionAutomationSettings = useMemo(() => {
+    const mode = asDistortionAutomationMode(String(automationControls.mode));
+
+    return {
+      enabled: mode !== "Off",
+      mode,
+      intensity: automationControls.intensity,
+      pointerZOffset: automationControls.pointerZOffset,
+      sweepCycleSeconds: automationControls.sweepCycleSeconds,
+      sweepWidth: automationControls.sweepWidth,
+      sweepCurve: automationControls.sweepCurve,
+      sweepBob: automationControls.sweepBob,
+      sweepBobFrequency: automationControls.sweepBobFrequency,
+      sweepDepth: automationControls.sweepDepth,
+      bpm: automationControls.bpm,
+      stepsPerBeat: Number(automationControls.stepsPerBeat),
+      buzzFraction: automationControls.buzzFraction,
+      buzzAttack: automationControls.buzzAttack,
+      buzzRelease: automationControls.buzzRelease,
+      spreadX: automationControls.spreadX,
+      spreadY: automationControls.spreadY,
+      centerBias: automationControls.centerBias,
+      travelPortion: automationControls.travelPortion,
+    };
+  }, [
+    automationControls.bpm,
+    automationControls.buzzAttack,
+    automationControls.buzzFraction,
+    automationControls.buzzRelease,
+    automationControls.centerBias,
+    automationControls.intensity,
+    automationControls.mode,
+    automationControls.pointerZOffset,
+    automationControls.spreadX,
+    automationControls.spreadY,
+    automationControls.stepsPerBeat,
+    automationControls.sweepBob,
+    automationControls.sweepBobFrequency,
+    automationControls.sweepCurve,
+    automationControls.sweepCycleSeconds,
+    automationControls.sweepDepth,
+    automationControls.sweepWidth,
+    automationControls.travelPortion,
+  ]);
+
+  const renderedText = textControls.autoRegen ? draftText : manualRenderedText;
+  const fogMode = asFogMode(String(environmentControls.fogMode));
+  const useTransparentBackground = exportCaptureState.transparentBackground;
+  const fogEnabledForRender =
+    environmentControls.fogEnabled &&
+    !(useTransparentBackground && exportCaptureState.disableFog);
 
   const chromaticOffset = useMemo(
-    () => new Vector2(postFxControls.chromaticOffsetX, postFxControls.chromaticOffsetY),
+    () =>
+      new Vector2(
+        postFxControls.chromaticOffsetX,
+        postFxControls.chromaticOffsetY,
+      ),
     [postFxControls.chromaticOffsetX, postFxControls.chromaticOffsetY],
-  )
+  );
 
   const postFxChildren = useMemo(() => {
-    const children: ReactElement[] = []
+    const children: ReactElement[] = [];
 
     if (postFxControls.bloomEnabled) {
       children.push(
@@ -1228,7 +1523,7 @@ export function TextDestructionExperience() {
           luminanceSmoothing={postFxControls.bloomSmoothing}
           mipmapBlur
         />,
-      )
+      );
     }
 
     if (postFxControls.dofEnabled) {
@@ -1241,7 +1536,7 @@ export function TextDestructionExperience() {
           bokehScale={postFxControls.dofBokehScale}
           resolutionScale={postFxControls.dofResolutionScale}
         />,
-      )
+      );
     }
 
     if (postFxControls.motionBlurEnabled) {
@@ -1256,11 +1551,13 @@ export function TextDestructionExperience() {
           samples={postFxControls.motionBlurSamples}
           opacity={postFxControls.motionBlurOpacity}
         />,
-      )
+      );
     }
 
     if (postFxControls.chromaticEnabled) {
-      children.push(<ChromaticAberration key="chromatic" offset={chromaticOffset} />)
+      children.push(
+        <ChromaticAberration key="chromatic" offset={chromaticOffset} />,
+      );
     }
 
     if (postFxControls.noiseEnabled) {
@@ -1270,7 +1567,7 @@ export function TextDestructionExperience() {
           blendFunction={BlendFunction.OVERLAY}
           opacity={postFxControls.noiseOpacity}
         />,
-      )
+      );
     }
 
     if (postFxControls.vignetteEnabled) {
@@ -1281,10 +1578,10 @@ export function TextDestructionExperience() {
           offset={postFxControls.vignetteOffset}
           darkness={postFxControls.vignetteDarkness}
         />,
-      )
+      );
     }
 
-    return children
+    return children;
   }, [
     chromaticOffset,
     postFxControls.bloomEnabled,
@@ -1309,20 +1606,54 @@ export function TextDestructionExperience() {
     postFxControls.vignetteDarkness,
     postFxControls.vignetteEnabled,
     postFxControls.vignetteOffset,
-  ])
+  ]);
 
   const meshKey = useMemo(
-    () => `${renderedText}:${textControls.font}:${textControls.curveSegments}:${textControls.bevelEnabled ? 1 : 0}`,
+    () =>
+      `${renderedText}:${textControls.font}:${textControls.curveSegments}:${textControls.bevelEnabled ? 1 : 0}`,
     [
       renderedText,
       textControls.bevelEnabled,
       textControls.curveSegments,
       textControls.font,
     ],
-  )
+  );
 
   return (
     <>
+      {!useTransparentBackground && (
+        <color
+          attach="background"
+          args={[environmentControls.backgroundColor]}
+        />
+      )}
+
+      {fogEnabledForRender ? (
+        fogMode === "Exp2" ? (
+          <fogExp2
+            attach="fog"
+            args={[
+              environmentControls.fogColor,
+              environmentControls.fogDensity,
+            ]}
+          />
+        ) : (
+          <fog
+            attach="fog"
+            args={[
+              environmentControls.fogColor,
+              environmentControls.fogNear,
+              environmentControls.fogFar,
+            ]}
+          />
+        )
+      ) : (
+        <fog
+          attach="fog"
+          args={[environmentControls.backgroundColor, 10000, 10001]}
+        />
+      )}
+
       <ambientLight intensity={0.35} color="#d9edff" />
       <directionalLight position={[7, 8, 6]} intensity={2.2} color="#f4f8ff" />
       <pointLight position={[-8, -3, 2]} intensity={1.2} color="#3ea9ff" />
@@ -1340,14 +1671,29 @@ export function TextDestructionExperience() {
         seed={seed}
         meshKey={meshKey}
         distortion={distortion}
+        automation={distortionAutomation}
         distortionOverrideRef={timelineDistortionOverrideRef}
         onTogglePause={togglePause}
       />
 
-      <mesh position={[0, -2.8, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[90, 90]} />
-        <meshStandardMaterial color="#070d14" roughness={0.95} metalness={0.05} />
-      </mesh>
+      {environmentControls.groundEnabled && (
+        <mesh
+          position={[0, environmentControls.groundY, 0]}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <planeGeometry
+            args={[
+              environmentControls.groundSize,
+              environmentControls.groundSize,
+            ]}
+          />
+          <meshStandardMaterial
+            color={environmentControls.groundColor}
+            roughness={environmentControls.groundRoughness}
+            metalness={environmentControls.groundMetalness}
+          />
+        </mesh>
+      )}
 
       <OrbitControls
         ref={orbitControlsRef}
@@ -1371,5 +1717,5 @@ export function TextDestructionExperience() {
         </EffectComposer>
       )}
     </>
-  )
+  );
 }

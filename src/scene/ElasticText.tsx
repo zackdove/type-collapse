@@ -26,6 +26,30 @@ export type DistortionSettings = {
   wireframe: boolean
 }
 
+export type DistortionAutomationMode = 'Off' | 'Sweep' | 'BPM Buzz'
+
+export type DistortionAutomationSettings = {
+  enabled: boolean
+  mode: DistortionAutomationMode
+  intensity: number
+  pointerZOffset: number
+  sweepCycleSeconds: number
+  sweepWidth: number
+  sweepCurve: number
+  sweepBob: number
+  sweepBobFrequency: number
+  sweepDepth: number
+  bpm: number
+  stepsPerBeat: number
+  buzzFraction: number
+  buzzAttack: number
+  buzzRelease: number
+  spreadX: number
+  spreadY: number
+  centerBias: number
+  travelPortion: number
+}
+
 type ElasticTextProps = {
   text: string
   font: string
@@ -39,8 +63,24 @@ type ElasticTextProps = {
   seed: number
   meshKey: string
   distortion: DistortionSettings
+  automation: DistortionAutomationSettings
   distortionOverrideRef?: MutableRefObject<Partial<DistortionSettings> | null>
   onTogglePause: () => void
+}
+
+type TextBounds = {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+  minZ: number
+  maxZ: number
+}
+
+type BpmAutomationState = {
+  stepIndex: number
+  from: Vector3
+  to: Vector3
 }
 
 type SimulationState = {
@@ -62,6 +102,25 @@ type EmissiveShader = {
   fragmentShader: string
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function easeInOutSine(value: number): number {
+  return -(Math.cos(Math.PI * value) - 1) * 0.5
+}
+
+function hashToUnit(value: number): number {
+  const hashed = Math.sin(value * 12.9898 + 78.233) * 43758.5453123
+  return hashed - Math.floor(hashed)
+}
+
+function randomSignedWithBiasFromUnit(unit: number, centerBias: number): number {
+  const random = unit * 2 - 1
+  const exponent = 1 + clamp(centerBias, 0, 1) * 2.5
+  return Math.sign(random) * Math.pow(Math.abs(random), exponent)
+}
+
 export function ElasticText({
   text,
   font,
@@ -75,6 +134,7 @@ export function ElasticText({
   seed,
   meshKey,
   distortion,
+  automation,
   distortionOverrideRef,
   onTogglePause,
 }: ElasticTextProps) {
@@ -88,7 +148,24 @@ export function ElasticText({
 
   const pointerCurrentRef = useRef(new Vector3())
   const pointerTargetRef = useRef(new Vector3())
+  const manualPointerTargetRef = useRef(new Vector3())
   const pointerPressRef = useRef({ value: 0 })
+  const automationPointerTargetRef = useRef(new Vector3())
+  const automationPointerPressRef = useRef({ value: 0 })
+  const pointerBlendRef = useRef(new Vector3())
+  const boundsRef = useRef<TextBounds>({
+    minX: -1,
+    maxX: 1,
+    minY: -1,
+    maxY: 1,
+    minZ: -0.5,
+    maxZ: 0.5,
+  })
+  const bpmAutomationRef = useRef<BpmAutomationState>({
+    stepIndex: -1,
+    from: new Vector3(),
+    to: new Vector3(),
+  })
 
   const scratchVectorRef = useRef(new Vector3())
   const scratchEulerRef = useRef(new Euler())
@@ -103,6 +180,7 @@ export function ElasticText({
     const geometry = mesh.geometry
     geometry.computeBoundingBox()
     geometry.center()
+    geometry.computeBoundingBox()
     geometry.computeBoundingSphere()
 
     const position = geometry.getAttribute('position')
@@ -128,9 +206,31 @@ export function ElasticText({
       velocityAttribute,
     }
 
-    pointerCurrentRef.current.set(0, 0, 0)
-    pointerTargetRef.current.set(0, 0, 0)
+    const bounds = geometry.boundingBox
+    if (bounds) {
+      boundsRef.current = {
+        minX: bounds.min.x,
+        maxX: bounds.max.x,
+        minY: bounds.min.y,
+        maxY: bounds.max.y,
+        minZ: bounds.min.z,
+        maxZ: bounds.max.z,
+      }
+    }
+
+    const centerX = (boundsRef.current.minX + boundsRef.current.maxX) * 0.5
+    const centerY = (boundsRef.current.minY + boundsRef.current.maxY) * 0.5
+    const centerZ = (boundsRef.current.minZ + boundsRef.current.maxZ) * 0.5
+
+    pointerCurrentRef.current.set(centerX, centerY, centerZ)
+    pointerTargetRef.current.set(centerX, centerY, centerZ)
+    manualPointerTargetRef.current.set(centerX, centerY, centerZ)
+    automationPointerTargetRef.current.set(centerX, centerY, centerZ)
     pointerPressRef.current.value = 0
+    automationPointerPressRef.current.value = 0
+    bpmAutomationRef.current.stepIndex = -1
+    bpmAutomationRef.current.from.set(centerX, centerY, centerZ)
+    bpmAutomationRef.current.to.set(centerX, centerY, centerZ)
   }, [])
 
   const engagePointer = useCallback(() => {
@@ -160,7 +260,7 @@ export function ElasticText({
       }
 
       const localPoint = meshRef.current.worldToLocal(event.point.clone())
-      pointerTargetRef.current.copy(localPoint)
+      manualPointerTargetRef.current.copy(localPoint)
       engagePointer()
     },
     [engagePointer, paused],
@@ -183,12 +283,16 @@ export function ElasticText({
   }, [initializeSimulation, meshKey])
 
   useEffect(() => {
-    const pointerPressState = pointerPressRef.current
+    const manualPointerPressState = pointerPressRef.current
 
     return () => {
-      gsap.killTweensOf(pointerPressState)
+      gsap.killTweensOf(manualPointerPressState)
     }
   }, [])
+
+  useEffect(() => {
+    bpmAutomationRef.current.stepIndex = -1
+  }, [automation.mode, automation.bpm, automation.stepsPerBeat])
 
   useFrame((_, delta) => {
     const simulation = simulationRef.current
@@ -214,10 +318,128 @@ export function ElasticText({
 
     timeRef.current += delta
 
+    const bounds = boundsRef.current
+    const width = Math.max(bounds.maxX - bounds.minX, 0.001)
+    const height = Math.max(bounds.maxY - bounds.minY, 0.001)
+    const depthSpan = Math.max(bounds.maxZ - bounds.minZ, 0.001)
+    const halfWidth = width * 0.5
+    const halfHeight = height * 0.5
+    const halfDepth = depthSpan * 0.5
+    const centerX = (bounds.maxX + bounds.minX) * 0.5
+    const centerY = (bounds.maxY + bounds.minY) * 0.5
+    const centerZ = (bounds.maxZ + bounds.minZ) * 0.5
+
+    const automationTarget = automationPointerTargetRef.current
+    const automationPressState = automationPointerPressRef.current
+    automationPressState.value = 0
+
+    if (automation.enabled && automation.mode !== 'Off') {
+      if (automation.mode === 'Sweep') {
+        const cycleSeconds = Math.max(automation.sweepCycleSeconds, 0.1)
+        const phase = (timeRef.current / cycleSeconds) * Math.PI * 2
+        const xNorm = Math.sin(phase)
+        const xTravel = halfWidth * clamp(automation.sweepWidth, 0.05, 1.3)
+        const curveLift = (1 - xNorm * xNorm) * automation.sweepCurve * halfHeight
+        const bob = Math.sin(phase * Math.max(automation.sweepBobFrequency, 0.01)) * automation.sweepBob * halfHeight
+        const zOscillation = Math.cos(phase * 1.65) * automation.sweepDepth * (halfDepth + 0.25)
+
+        const targetX = centerX + xNorm * xTravel
+        const targetY = centerY + curveLift + bob
+        const targetZ = centerZ + zOscillation + automation.pointerZOffset
+
+        const yLimit = halfHeight * 1.35
+        automationTarget.set(
+          clamp(targetX, centerX - xTravel, centerX + xTravel),
+          clamp(targetY, centerY - yLimit, centerY + yLimit),
+          targetZ,
+        )
+        automationPressState.value = clamp(automation.intensity, 0, 1)
+      } else if (automation.mode === 'BPM Buzz') {
+        const bpm = Math.max(automation.bpm, 1)
+        const stepsPerBeat = Math.max(1, automation.stepsPerBeat)
+        const stepDuration = 60 / (bpm * stepsPerBeat)
+        const stepPosition = timeRef.current / stepDuration
+        const stepIndex = Math.floor(stepPosition)
+        const stepProgress = stepPosition - stepIndex
+
+        const bpmState = bpmAutomationRef.current
+        if (stepIndex !== bpmState.stepIndex) {
+          bpmState.stepIndex = stepIndex
+          bpmState.from.copy(automationTarget)
+
+          const spreadX = clamp(automation.spreadX, 0.05, 1.3)
+          const spreadY = clamp(automation.spreadY, 0.05, 1.3)
+          const randomSeedBase = seed * 0.173 + stepIndex * 1.4142
+          const xNorm = randomSignedWithBiasFromUnit(
+            hashToUnit(randomSeedBase + 13.11),
+            automation.centerBias,
+          )
+          const yNorm = randomSignedWithBiasFromUnit(
+            hashToUnit(randomSeedBase + 31.77),
+            automation.centerBias,
+          )
+          const zNorm = randomSignedWithBiasFromUnit(
+            hashToUnit(randomSeedBase + 57.43),
+            Math.min(1, automation.centerBias + 0.25),
+          )
+          const xRange = halfWidth * spreadX
+          const yRange = halfHeight * spreadY
+          const zRange = halfDepth * 0.35 + 0.12
+
+          bpmState.to.set(
+            centerX + xNorm * xRange,
+            centerY + yNorm * yRange,
+            centerZ + zNorm * zRange + automation.pointerZOffset,
+          )
+        }
+
+        const travelPortion = clamp(automation.travelPortion, 0.01, 1)
+        const moveAlpha = clamp(stepProgress / travelPortion, 0, 1)
+        automationTarget.lerpVectors(
+          bpmState.from,
+          bpmState.to,
+          easeInOutSine(moveAlpha),
+        )
+
+        const buzzFraction = clamp(automation.buzzFraction, 0.02, 1)
+        if (stepProgress <= buzzFraction) {
+          const buzzProgress = stepProgress / buzzFraction
+          const attack = clamp(automation.buzzAttack, 0.01, 0.49)
+          const release = clamp(automation.buzzRelease, 0.01, 0.49)
+          let envelope = 1
+
+          if (buzzProgress < attack) {
+            envelope = buzzProgress / attack
+          } else if (buzzProgress > 1 - release) {
+            envelope = (1 - buzzProgress) / release
+          }
+
+          automationPressState.value = clamp(
+            envelope * automation.intensity,
+            0,
+            1,
+          )
+        }
+      }
+    }
+
+    const manualPress = pointerPressRef.current.value
+    const automationPress = automationPressState.value
+    const totalPress = manualPress + automationPress
+
+    if (totalPress > 0.0001) {
+      pointerBlendRef.current
+        .set(0, 0, 0)
+        .addScaledVector(manualPointerTargetRef.current, manualPress)
+        .addScaledVector(automationTarget, automationPress)
+        .multiplyScalar(1 / totalPress)
+      pointerTargetRef.current.copy(pointerBlendRef.current)
+    }
+
     const followAlpha = 1 - Math.exp(-delta * activeDistortion.followRate)
     pointerCurrentRef.current.lerp(pointerTargetRef.current, followAlpha)
 
-    const press = pointerPressRef.current.value
+    const press = Math.max(manualPress, automationPress)
     const idleMix = activeDistortion.idleMix
     const mixFactor = Math.max(press, idleMix)
 
