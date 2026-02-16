@@ -2,6 +2,7 @@ import { OrbitControls } from '@react-three/drei'
 import {
   Bloom,
   ChromaticAberration,
+  DepthOfField,
   EffectComposer,
   Noise,
   Vignette,
@@ -21,6 +22,7 @@ import { Vector2 } from 'three'
 import { DEFAULT_FONT, DEFAULT_TEXT, FONT_OPTIONS } from '../data/fonts'
 import { useScreenshotExport } from '../hooks/useScreenshotExport'
 import { ElasticText, type DistortionSettings } from './ElasticText'
+import { CinematicMotionBlur } from './effects/CinematicMotionBlur'
 
 export function TextDestructionExperience() {
   const [paused, setPaused] = useState(false)
@@ -96,6 +98,18 @@ export function TextDestructionExperience() {
     bloomIntensity: { value: 1.2, min: 0, max: 4, step: 0.01 },
     bloomThreshold: { value: 0.23, min: 0, max: 1, step: 0.01 },
     bloomSmoothing: { value: 0.68, min: 0, max: 1, step: 0.01 },
+    dofEnabled: false,
+    dofAutoFocusText: true,
+    dofFocusDistance: { value: 9, min: 0.1, max: 40, step: 0.01 },
+    dofFocusRange: { value: 2, min: 0.05, max: 20, step: 0.01 },
+    dofBokehScale: { value: 1.25, min: 0, max: 8, step: 0.01 },
+    dofResolutionScale: { value: 0.75, min: 0.1, max: 1, step: 0.01 },
+    motionBlurEnabled: false,
+    motionBlurStrength: { value: 0.0015, min: 0, max: 0.01, step: 0.0001 },
+    motionBlurDirectionX: { value: 1.0, min: -2, max: 2, step: 0.01 },
+    motionBlurDirectionY: { value: 0.35, min: -2, max: 2, step: 0.01 },
+    motionBlurSamples: { value: 8, min: 2, max: 24, step: 1 },
+    motionBlurOpacity: { value: 0.3, min: 0, max: 1, step: 0.01 },
     chromaticEnabled: true,
     chromaticOffsetX: { value: 0.0012, min: 0, max: 0.01, step: 0.0001 },
     chromaticOffsetY: { value: 0.0012, min: 0, max: 0.01, step: 0.0001 },
@@ -195,6 +209,34 @@ export function TextDestructionExperience() {
       )
     }
 
+    if (postFxControls.dofEnabled) {
+      children.push(
+        <DepthOfField
+          key="dof"
+          target={postFxControls.dofAutoFocusText ? [0, 0, 0] : undefined}
+          focusDistance={postFxControls.dofFocusDistance}
+          focusRange={postFxControls.dofFocusRange}
+          bokehScale={postFxControls.dofBokehScale}
+          resolutionScale={postFxControls.dofResolutionScale}
+        />,
+      )
+    }
+
+    if (postFxControls.motionBlurEnabled) {
+      children.push(
+        <CinematicMotionBlur
+          key="motion-blur"
+          strength={postFxControls.motionBlurStrength}
+          direction={[
+            postFxControls.motionBlurDirectionX,
+            postFxControls.motionBlurDirectionY,
+          ]}
+          samples={postFxControls.motionBlurSamples}
+          opacity={postFxControls.motionBlurOpacity}
+        />,
+      )
+    }
+
     if (postFxControls.chromaticEnabled) {
       children.push(<ChromaticAberration key="chromatic" offset={chromaticOffset} />)
     }
@@ -228,6 +270,18 @@ export function TextDestructionExperience() {
     postFxControls.bloomSmoothing,
     postFxControls.bloomThreshold,
     postFxControls.chromaticEnabled,
+    postFxControls.dofAutoFocusText,
+    postFxControls.dofBokehScale,
+    postFxControls.dofEnabled,
+    postFxControls.dofFocusDistance,
+    postFxControls.dofFocusRange,
+    postFxControls.dofResolutionScale,
+    postFxControls.motionBlurDirectionX,
+    postFxControls.motionBlurDirectionY,
+    postFxControls.motionBlurEnabled,
+    postFxControls.motionBlurOpacity,
+    postFxControls.motionBlurSamples,
+    postFxControls.motionBlurStrength,
     postFxControls.noiseEnabled,
     postFxControls.noiseOpacity,
     postFxControls.vignetteDarkness,
