@@ -1,4 +1,4 @@
-import { Center, Text3D } from '@react-three/drei'
+import { Text3D } from '@react-three/drei'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { createNoise3D } from 'simplex-noise'
 import gsap from 'gsap'
@@ -87,7 +87,6 @@ export function ElasticText({
   const pointerCurrentRef = useRef(new Vector3())
   const pointerTargetRef = useRef(new Vector3())
   const pointerPressRef = useRef({ value: 0 })
-  const pauseBlendRef = useRef({ value: paused ? 1 : 0 })
 
   const scratchVectorRef = useRef(new Vector3())
   const scratchEulerRef = useRef(new Euler())
@@ -100,6 +99,10 @@ export function ElasticText({
     }
 
     const geometry = mesh.geometry
+    geometry.computeBoundingBox()
+    geometry.center()
+    geometry.computeBoundingSphere()
+
     const position = geometry.getAttribute('position')
     const normal = geometry.getAttribute('normal')
 
@@ -178,25 +181,10 @@ export function ElasticText({
   }, [initializeSimulation, meshKey])
 
   useEffect(() => {
-    gsap.to(pauseBlendRef.current, {
-      value: paused ? 1 : 0,
-      duration: 0.25,
-      ease: 'power2.out',
-      overwrite: true,
-    })
-
-    if (paused) {
-      releasePointer()
-    }
-  }, [paused, releasePointer])
-
-  useEffect(() => {
     const pointerPressState = pointerPressRef.current
-    const pauseBlendState = pauseBlendRef.current
 
     return () => {
       gsap.killTweensOf(pointerPressState)
-      gsap.killTweensOf(pauseBlendState)
     }
   }, [])
 
@@ -206,16 +194,24 @@ export function ElasticText({
       return
     }
 
-    if (!paused) {
-      timeRef.current += delta
+    const shader = shaderRef.current
+    if (shader) {
+      shader.uniforms.uEmissiveBaseColor.value.set(distortion.emissive)
+      shader.uniforms.uEmissiveBoost.value = distortion.emissiveVelocityBoost
+      shader.uniforms.uEmissiveIntensity.value = distortion.emissiveIntensity
     }
+
+    if (paused) {
+      return
+    }
+
+    timeRef.current += delta
 
     const followAlpha = 1 - Math.exp(-delta * distortion.followRate)
     pointerCurrentRef.current.lerp(pointerTargetRef.current, followAlpha)
 
-    const pauseBlend = pauseBlendRef.current.value
-    const press = pointerPressRef.current.value * (1 - pauseBlend)
-    const idleMix = distortion.idleMix * (1 - pauseBlend)
+    const press = pointerPressRef.current.value
+    const idleMix = distortion.idleMix
     const mixFactor = Math.max(press, idleMix)
 
     const pointer = pointerCurrentRef.current
@@ -309,70 +305,63 @@ export function ElasticText({
 
     simulation.velocityAttribute.needsUpdate = true
 
-    const shader = shaderRef.current
-    if (shader) {
-      shader.uniforms.uEmissiveBaseColor.value.set(distortion.emissive)
-      shader.uniforms.uEmissiveBoost.value = distortion.emissiveVelocityBoost
-      shader.uniforms.uEmissiveIntensity.value = distortion.emissiveIntensity
-    }
   })
 
   return (
     <group rotation={[-0.15, 0, 0]}>
-      <Center>
-        <Text3D
-          key={meshKey}
-          ref={meshRef}
-          font={font}
-          size={size}
-          height={depth}
-          bevelEnabled={bevelEnabled}
-          bevelSize={bevelSize}
-          bevelThickness={bevelThickness}
-          curveSegments={curveSegments}
-          onPointerMove={handlePointerMove}
-          onPointerOut={handlePointerOut}
-          onPointerUp={handlePointerOut}
-          onClick={handleClick}
-        >
-          {text}
-          <meshStandardMaterial
-            ref={materialRef}
-            color={distortion.color}
-            emissive={distortion.emissive}
-            emissiveIntensity={distortion.emissiveIntensity}
-            roughness={distortion.roughness}
-            metalness={distortion.metalness}
-            wireframe={distortion.wireframe}
-            customProgramCacheKey={() => 'elastic-emissive-velocity-v1'}
-            onBeforeCompile={(shader: EmissiveShader) => {
-              shader.uniforms.uEmissiveBaseColor = {
-                value: new Color(distortion.emissive),
-              }
-              shader.uniforms.uEmissiveBoost = {
-                value: distortion.emissiveVelocityBoost,
-              }
-              shader.uniforms.uEmissiveIntensity = {
-                value: distortion.emissiveIntensity,
-              }
+      <Text3D
+        key={meshKey}
+        ref={meshRef}
+        font={font}
+        size={size}
+        height={depth}
+        bevelEnabled={bevelEnabled}
+        bevelSize={bevelSize}
+        bevelThickness={bevelThickness}
+        curveSegments={curveSegments}
+        onPointerMove={handlePointerMove}
+        onPointerOut={handlePointerOut}
+        onPointerUp={handlePointerOut}
+        onClick={handleClick}
+      >
+        {text}
+        <meshStandardMaterial
+          ref={materialRef}
+          color={distortion.color}
+          emissive={distortion.emissive}
+          emissiveIntensity={distortion.emissiveIntensity}
+          roughness={distortion.roughness}
+          metalness={distortion.metalness}
+          wireframe={distortion.wireframe}
+          customProgramCacheKey={() => 'elastic-emissive-velocity-v1'}
+          onBeforeCompile={(shader: EmissiveShader) => {
+            shader.uniforms.uEmissiveBaseColor = {
+              value: new Color(distortion.emissive),
+            }
+            shader.uniforms.uEmissiveBoost = {
+              value: distortion.emissiveVelocityBoost,
+            }
+            shader.uniforms.uEmissiveIntensity = {
+              value: distortion.emissiveIntensity,
+            }
 
-              shader.vertexShader = shader.vertexShader
-                .replace(
-                  '#include <common>',
-                  `#include <common>
+            shader.vertexShader = shader.vertexShader
+              .replace(
+                '#include <common>',
+                `#include <common>
 attribute vec3 aVelocity;
 varying vec3 vVelocity;`,
-                )
-                .replace(
-                  '#include <begin_vertex>',
-                  `#include <begin_vertex>
+              )
+              .replace(
+                '#include <begin_vertex>',
+                `#include <begin_vertex>
 vVelocity = aVelocity;`,
-                )
+              )
 
-              shader.fragmentShader = shader.fragmentShader
-                .replace(
-                  '#include <common>',
-                  `#include <common>
+            shader.fragmentShader = shader.fragmentShader
+              .replace(
+                '#include <common>',
+                `#include <common>
 uniform vec3 uEmissiveBaseColor;
 uniform float uEmissiveBoost;
 uniform float uEmissiveIntensity;
@@ -392,13 +381,12 @@ vec3 tslHue(vec3 baseColor, vec3 adjustment) {
 float emissionFactor = length(vVelocity) * 10.0;
 vec3 shiftedEmissive = tslHue(uEmissiveBaseColor, hueRotated) * emissionFactor * uEmissiveBoost * uEmissiveIntensity;
 vec3 totalEmissiveRadiance = shiftedEmissive;`,
-                )
+              )
 
-              shaderRef.current = shader
-            }}
-          />
-        </Text3D>
-      </Center>
+            shaderRef.current = shader
+          }}
+        />
+      </Text3D>
     </group>
   )
 }
