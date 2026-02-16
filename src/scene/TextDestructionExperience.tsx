@@ -8,6 +8,7 @@ import {
   Vignette,
 } from '@react-three/postprocessing'
 import { button, useControls } from 'leva'
+import gsap from 'gsap'
 import { BlendFunction } from 'postprocessing'
 import {
   useCallback,
@@ -17,20 +18,676 @@ import {
   useState,
   type ReactElement,
 } from 'react'
-import { Vector2 } from 'three'
+import { PerspectiveCamera, Quaternion, Vector2, Vector3 } from 'three'
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
 import { DEFAULT_FONT, DEFAULT_TEXT, FONT_OPTIONS } from '../data/fonts'
 import { useScreenshotExport } from '../hooks/useScreenshotExport'
 import { ElasticText, type DistortionSettings } from './ElasticText'
 import { CinematicMotionBlur } from './effects/CinematicMotionBlur'
 
+type TimelineSnapshot = {
+  cameraPosition: Vector3
+  cameraTarget: Vector3
+  cameraFov: number
+  distortion: {
+    noiseAmplitude: number
+    explodeAmplitude: number
+    rotationAmplitude: number
+    spring: number
+    friction: number
+    emissiveVelocityBoost: number
+  }
+  postFx: {
+    bloomIntensity: number
+    chromaticOffsetX: number
+    chromaticOffsetY: number
+    noiseOpacity: number
+    dofBokehScale: number
+    motionBlurStrength: number
+  }
+}
+
+const TIMELINE_PRESETS = ['Club Cuts', 'Cinematic Drift', 'Hyper Zoom'] as const
+
+type TimelinePreset = (typeof TIMELINE_PRESETS)[number]
+
+const TIMELINE_PRESET_OPTIONS = Object.fromEntries(
+  TIMELINE_PRESETS.map((preset) => [preset, preset]),
+) as Record<TimelinePreset, TimelinePreset>
+
+function asTimelinePreset(value: string): TimelinePreset {
+  return TIMELINE_PRESETS.includes(value as TimelinePreset)
+    ? (value as TimelinePreset)
+    : 'Club Cuts'
+}
+
+type CameraTrack = {
+  x: number
+  y: number
+  z: number
+  tx: number
+  ty: number
+  tz: number
+  fov: number
+  roll: number
+  shake: number
+}
+
+type CameraShot = {
+  cut: CameraTrack
+  move: Partial<CameraTrack>
+  duration: number
+  hold: number
+  ease?: string
+}
+
+function createCameraShots(
+  preset: TimelinePreset,
+  radiusScale: number,
+  heightOffset: number,
+): CameraShot[] {
+  if (preset === 'Cinematic Drift') {
+    return [
+      {
+        cut: {
+          x: -3.4 * radiusScale,
+          y: 1.6 + heightOffset,
+          z: 7.6 * radiusScale,
+          tx: 0.02,
+          ty: 0.11,
+          tz: 0,
+          fov: 55,
+          roll: 0.02,
+          shake: 0.005 * radiusScale,
+        },
+        move: {
+          x: 2.1 * radiusScale,
+          y: 0.9 + heightOffset,
+          z: 5.7 * radiusScale,
+          tx: -0.04,
+          ty: 0.08,
+          tz: 0.01,
+          fov: 40,
+          roll: -0.03,
+          shake: 0.004 * radiusScale,
+        },
+        duration: 2.1,
+        hold: 0.02,
+        ease: 'sine.inOut',
+      },
+      {
+        cut: {
+          x: 5.2 * radiusScale,
+          y: 2.5 + heightOffset,
+          z: 2.8 * radiusScale,
+          tx: -0.08,
+          ty: 0.03,
+          tz: 0,
+          fov: 40,
+          roll: 0.07,
+          shake: 0.008 * radiusScale,
+        },
+        move: {
+          x: 2.3 * radiusScale,
+          y: 0.65 + heightOffset,
+          z: 2.1 * radiusScale,
+          tx: 0.02,
+          ty: 0.11,
+          tz: 0,
+          fov: 31,
+          roll: 0.01,
+          shake: 0.007 * radiusScale,
+        },
+        duration: 1.35,
+        hold: 0.02,
+        ease: 'expo.inOut',
+      },
+      {
+        cut: {
+          x: -5.7 * radiusScale,
+          y: 0.36 + heightOffset,
+          z: 4.3 * radiusScale,
+          tx: 0.1,
+          ty: 0.07,
+          tz: 0.01,
+          fov: 60,
+          roll: -0.09,
+          shake: 0.012 * radiusScale,
+        },
+        move: {
+          x: -2.4 * radiusScale,
+          y: 0.2 + heightOffset,
+          z: 3.3 * radiusScale,
+          tx: 0.01,
+          ty: 0.09,
+          tz: 0,
+          fov: 46,
+          roll: -0.03,
+          shake: 0.008 * radiusScale,
+        },
+        duration: 1.12,
+        hold: 0.02,
+        ease: 'power2.inOut',
+      },
+      {
+        cut: {
+          x: 0.45 * radiusScale,
+          y: -0.18 + heightOffset,
+          z: 3.7 * radiusScale,
+          tx: 0,
+          ty: 0.09,
+          tz: 0,
+          fov: 54,
+          roll: 0,
+          shake: 0.009 * radiusScale,
+        },
+        move: {
+          x: -0.2 * radiusScale,
+          y: 0.28 + heightOffset,
+          z: 5.4 * radiusScale,
+          tx: 0.01,
+          ty: 0.1,
+          tz: 0,
+          fov: 42,
+          roll: 0.01,
+          shake: 0.006 * radiusScale,
+        },
+        duration: 1.92,
+        hold: 0.02,
+        ease: 'sine.inOut',
+      },
+      {
+        cut: {
+          x: 2.9 * radiusScale,
+          y: 4.1 + heightOffset,
+          z: 3.2 * radiusScale,
+          tx: 0.03,
+          ty: -0.1,
+          tz: 0,
+          fov: 48,
+          roll: -0.07,
+          shake: 0.011 * radiusScale,
+        },
+        move: {
+          x: 1.2 * radiusScale,
+          y: 2.6 + heightOffset,
+          z: 2.4 * radiusScale,
+          tx: 0.06,
+          ty: 0.02,
+          tz: 0,
+          fov: 37,
+          roll: -0.02,
+          shake: 0.007 * radiusScale,
+        },
+        duration: 1.04,
+        hold: 0.02,
+        ease: 'power2.inOut',
+      },
+    ]
+  }
+
+  if (preset === 'Hyper Zoom') {
+    return [
+      {
+        cut: {
+          x: -6.6 * radiusScale,
+          y: 0.28 + heightOffset,
+          z: 4.6 * radiusScale,
+          tx: 0.08,
+          ty: 0.1,
+          tz: 0.01,
+          fov: 76,
+          roll: 0.2,
+          shake: 0.03 * radiusScale,
+        },
+        move: {
+          x: -3.3 * radiusScale,
+          y: 0.16 + heightOffset,
+          z: 2.0 * radiusScale,
+          tx: -0.03,
+          ty: 0.12,
+          tz: 0,
+          fov: 22,
+          roll: 0.08,
+          shake: 0.019 * radiusScale,
+        },
+        duration: 0.56,
+        hold: 0.02,
+        ease: 'power3.inOut',
+      },
+      {
+        cut: {
+          x: 1.8 * radiusScale,
+          y: 5.4 + heightOffset,
+          z: 3.2 * radiusScale,
+          tx: 0.03,
+          ty: -0.12,
+          tz: 0,
+          fov: 50,
+          roll: -0.12,
+          shake: 0.021 * radiusScale,
+        },
+        move: {
+          x: 3.1 * radiusScale,
+          y: 2.8 + heightOffset,
+          z: 1.9 * radiusScale,
+          tx: 0.09,
+          ty: 0.08,
+          tz: 0,
+          fov: 30,
+          roll: -0.03,
+          shake: 0.013 * radiusScale,
+        },
+        duration: 0.78,
+        hold: 0.02,
+        ease: 'expo.inOut',
+      },
+      {
+        cut: {
+          x: 4.9 * radiusScale,
+          y: 0.5 + heightOffset,
+          z: 1.8 * radiusScale,
+          tx: -0.07,
+          ty: 0.05,
+          tz: 0,
+          fov: 34,
+          roll: 0.16,
+          shake: 0.026 * radiusScale,
+        },
+        move: {
+          x: 1.0 * radiusScale,
+          y: 0.36 + heightOffset,
+          z: 1.1 * radiusScale,
+          tx: 0.03,
+          ty: 0.1,
+          tz: 0,
+          fov: 20,
+          roll: 0.04,
+          shake: 0.017 * radiusScale,
+        },
+        duration: 0.54,
+        hold: 0.02,
+        ease: 'power2.inOut',
+      },
+      {
+        cut: {
+          x: -1.4 * radiusScale,
+          y: 0.9 + heightOffset,
+          z: 7.8 * radiusScale,
+          tx: 0,
+          ty: 0.11,
+          tz: 0.01,
+          fov: 64,
+          roll: -0.04,
+          shake: 0.01 * radiusScale,
+        },
+        move: {
+          x: 0.9 * radiusScale,
+          y: 0.52 + heightOffset,
+          z: 5.3 * radiusScale,
+          tx: -0.02,
+          ty: 0.08,
+          tz: 0.01,
+          fov: 42,
+          roll: 0.01,
+          shake: 0.008 * radiusScale,
+        },
+        duration: 1.48,
+        hold: 0.02,
+        ease: 'sine.inOut',
+      },
+      {
+        cut: {
+          x: -2.8 * radiusScale,
+          y: -0.4 + heightOffset,
+          z: 4.5 * radiusScale,
+          tx: 0.04,
+          ty: 0.02,
+          tz: 0,
+          fov: 69,
+          roll: -0.18,
+          shake: 0.034 * radiusScale,
+        },
+        move: {
+          x: -0.1 * radiusScale,
+          y: 0.32 + heightOffset,
+          z: 3.1 * radiusScale,
+          tx: 0,
+          ty: 0.12,
+          tz: 0,
+          fov: 45,
+          roll: -0.06,
+          shake: 0.018 * radiusScale,
+        },
+        duration: 0.62,
+        hold: 0.02,
+        ease: 'power3.inOut',
+      },
+      {
+        cut: {
+          x: 3.2 * radiusScale,
+          y: 0.18 + heightOffset,
+          z: 1.5 * radiusScale,
+          tx: -0.05,
+          ty: 0.1,
+          tz: 0,
+          fov: 28,
+          roll: 0.11,
+          shake: 0.024 * radiusScale,
+        },
+        move: {
+          x: -0.6 * radiusScale,
+          y: 0.28 + heightOffset,
+          z: 2.7 * radiusScale,
+          tx: 0.02,
+          ty: 0.08,
+          tz: 0,
+          fov: 40,
+          roll: 0.02,
+          shake: 0.014 * radiusScale,
+        },
+        duration: 0.62,
+        hold: 0.02,
+        ease: 'power2.inOut',
+      },
+      {
+        cut: {
+          x: 0.1 * radiusScale,
+          y: 1.1 + heightOffset,
+          z: 7.0 * radiusScale,
+          tx: 0,
+          ty: 0.12,
+          tz: 0.01,
+          fov: 56,
+          roll: 0.03,
+          shake: 0.008 * radiusScale,
+        },
+        move: {
+          x: -1.0 * radiusScale,
+          y: 0.42 + heightOffset,
+          z: 4.6 * radiusScale,
+          tx: -0.01,
+          ty: 0.08,
+          tz: 0.01,
+          fov: 34,
+          roll: 0,
+          shake: 0.006 * radiusScale,
+        },
+        duration: 1.74,
+        hold: 0.02,
+        ease: 'sine.inOut',
+      },
+    ]
+  }
+
+  return [
+    {
+      cut: {
+        x: -7.6 * radiusScale,
+        y: 0.3 + heightOffset,
+        z: 5.2 * radiusScale,
+        tx: 0.08,
+        ty: 0.1,
+        tz: 0.02,
+        fov: 70,
+        roll: 0.16,
+        shake: 0.024 * radiusScale,
+      },
+      move: {
+        x: -5.4 * radiusScale,
+        y: 0.14 + heightOffset,
+        z: 3.7 * radiusScale,
+        tx: -0.06,
+        ty: 0.16,
+        tz: 0.01,
+        fov: 52,
+        roll: 0.04,
+        shake: 0.015 * radiusScale,
+      },
+      duration: 0.72,
+      hold: 0.02,
+      ease: 'power2.inOut',
+    },
+    {
+      cut: {
+        x: 2.5 * radiusScale,
+        y: 4.9 + heightOffset,
+        z: 3.3 * radiusScale,
+        tx: 0.02,
+        ty: -0.1,
+        tz: 0,
+        fov: 46,
+        roll: -0.1,
+        shake: 0.02 * radiusScale,
+      },
+      move: {
+        x: 2.9 * radiusScale,
+        y: 3.1 + heightOffset,
+        z: 2.2 * radiusScale,
+        tx: 0.11,
+        ty: 0.06,
+        tz: 0,
+        fov: 38,
+        roll: -0.04,
+        shake: 0.012 * radiusScale,
+      },
+      duration: 0.9,
+      hold: 0.02,
+      ease: 'expo.inOut',
+    },
+    {
+      cut: {
+        x: -1.1 * radiusScale,
+        y: 1.6 + heightOffset,
+        z: 7.4 * radiusScale,
+        tx: 0.01,
+        ty: 0.11,
+        tz: 0,
+        fov: 58,
+        roll: 0.02,
+        shake: 0.008 * radiusScale,
+      },
+      move: {
+        x: 1.2 * radiusScale,
+        y: 0.85 + heightOffset,
+        z: 5.5 * radiusScale,
+        tx: -0.04,
+        ty: 0.08,
+        tz: 0.02,
+        fov: 42,
+        roll: -0.02,
+        shake: 0.007 * radiusScale,
+      },
+      duration: 1.68,
+      hold: 0.02,
+      ease: 'sine.inOut',
+    },
+    {
+      cut: {
+        x: 5.5 * radiusScale,
+        y: 0.42 + heightOffset,
+        z: 2.1 * radiusScale,
+        tx: -0.09,
+        ty: 0.03,
+        tz: 0,
+        fov: 34,
+        roll: 0.2,
+        shake: 0.031 * radiusScale,
+      },
+      move: {
+        x: 3.2 * radiusScale,
+        y: 0.18 + heightOffset,
+        z: 1.35 * radiusScale,
+        tx: 0.07,
+        ty: 0.13,
+        tz: 0,
+        fov: 24,
+        roll: 0.09,
+        shake: 0.02 * radiusScale,
+      },
+      duration: 0.58,
+      hold: 0.02,
+      ease: 'power3.inOut',
+    },
+    {
+      cut: {
+        x: -3.1 * radiusScale,
+        y: -0.34 + heightOffset,
+        z: 4.8 * radiusScale,
+        tx: 0.04,
+        ty: 0.0,
+        tz: 0,
+        fov: 64,
+        roll: -0.19,
+        shake: 0.032 * radiusScale,
+      },
+      move: {
+        x: -0.4 * radiusScale,
+        y: 0.34 + heightOffset,
+        z: 3.4 * radiusScale,
+        tx: 0.01,
+        ty: 0.11,
+        tz: 0.01,
+        fov: 47,
+        roll: -0.07,
+        shake: 0.018 * radiusScale,
+      },
+      duration: 0.68,
+      hold: 0.02,
+      ease: 'power3.inOut',
+    },
+    {
+      cut: {
+        x: -4.2 * radiusScale,
+        y: 2.25 + heightOffset,
+        z: 1.2 * radiusScale,
+        tx: 0.1,
+        ty: -0.06,
+        tz: 0,
+        fov: 56,
+        roll: 0.09,
+        shake: 0.014 * radiusScale,
+      },
+      move: {
+        x: 3.9 * radiusScale,
+        y: 0.52 + heightOffset,
+        z: 1.9 * radiusScale,
+        tx: -0.11,
+        ty: 0.09,
+        tz: 0,
+        fov: 43,
+        roll: -0.08,
+        shake: 0.016 * radiusScale,
+      },
+      duration: 0.96,
+      hold: 0.02,
+      ease: 'sine.inOut',
+    },
+    {
+      cut: {
+        x: 0.25 * radiusScale,
+        y: 1.1 + heightOffset,
+        z: 7.1 * radiusScale,
+        tx: 0,
+        ty: 0.12,
+        tz: 0.01,
+        fov: 52,
+        roll: 0.03,
+        shake: 0.007 * radiusScale,
+      },
+      move: {
+        x: -0.9 * radiusScale,
+        y: 0.4 + heightOffset,
+        z: 4.8 * radiusScale,
+        tx: -0.02,
+        ty: 0.08,
+        tz: 0,
+        fov: 36,
+        roll: 0.0,
+        shake: 0.006 * radiusScale,
+      },
+      duration: 1.95,
+      hold: 0.02,
+      ease: 'sine.inOut',
+    },
+    {
+      cut: {
+        x: 2.6 * radiusScale,
+        y: 0.22 + heightOffset,
+        z: 1.55 * radiusScale,
+        tx: -0.06,
+        ty: 0.09,
+        tz: 0.02,
+        fov: 29,
+        roll: 0.12,
+        shake: 0.023 * radiusScale,
+      },
+      move: {
+        x: 0.9 * radiusScale,
+        y: 0.36 + heightOffset,
+        z: 2.4 * radiusScale,
+        tx: 0.03,
+        ty: 0.07,
+        tz: 0.01,
+        fov: 40,
+        roll: 0.02,
+        shake: 0.013 * radiusScale,
+      },
+      duration: 0.64,
+      hold: 0.02,
+      ease: 'power2.inOut',
+    },
+    {
+      cut: {
+        x: -1.6 * radiusScale,
+        y: 0.7 + heightOffset,
+        z: 6.2 * radiusScale,
+        tx: 0,
+        ty: 0.1,
+        tz: 0,
+        fov: 60,
+        roll: -0.05,
+        shake: 0.011 * radiusScale,
+      },
+      move: {
+        x: 0.1 * radiusScale,
+        y: 0.46 + heightOffset,
+        z: 5.0 * radiusScale,
+        tx: 0.01,
+        ty: 0.08,
+        tz: 0,
+        fov: 45,
+        roll: 0,
+        shake: 0.008 * radiusScale,
+      },
+      duration: 0.88,
+      hold: 0.02,
+      ease: 'power2.inOut',
+    },
+  ]
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
 export function TextDestructionExperience() {
   const [paused, setPaused] = useState(false)
   const [seed, setSeed] = useState(() => Math.random() * 1000)
   const [manualRenderedText, setManualRenderedText] = useState(DEFAULT_TEXT)
+  const [timelinePlaying, setTimelinePlaying] = useState(false)
+  const [timelineEnabled, setTimelineEnabled] = useState(false)
 
   const draftTextRef = useRef(DEFAULT_TEXT)
   const exportScaleRef = useRef(2)
+  const orbitControlsRef = useRef<OrbitControlsImpl>(null)
+  const timelineRef = useRef<gsap.core.Timeline | null>(null)
+  const timelineSnapshotRef = useRef<TimelineSnapshot | null>(null)
+  const timelineAutoPlayRef = useRef(true)
+  const timelineDistortionOverrideRef = useRef<
+    Partial<DistortionSettings> | null
+  >(null)
   const exportScreenshot = useScreenshotExport()
 
   const togglePause = useCallback(() => {
@@ -72,53 +729,136 @@ export function TextDestructionExperience() {
     [regenerateText],
   )
 
-  const distortionControls = useControls('Distortion', {
-    noiseAmplitude: { value: 1.6, min: 0, max: 4, step: 0.01 },
-    noiseFrequency: { value: 0.5, min: 0.05, max: 4, step: 0.01 },
-    noiseSpeed: { value: 1.0, min: 0, max: 5, step: 0.01 },
-    followRate: { value: 18, min: 1, max: 50, step: 0.1 },
-    radius: { value: 0.5, min: 0.05, max: 3, step: 0.01 },
-    explodeAmplitude: { value: 1.5, min: 0, max: 5, step: 0.01 },
-    rotationAmplitude: { value: 1.0, min: 0, max: 5, step: 0.01 },
-    spring: { value: 0.05, min: 0.001, max: 0.2, step: 0.001 },
-    friction: { value: 0.9, min: 0.5, max: 0.999, step: 0.001 },
-    idleMix: { value: 0.0, min: 0, max: 0.5, step: 0.001 },
-    color: '#f0f5ff',
-    emissive: '#0b55c7',
-    emissiveIntensity: { value: 0.75, min: 0, max: 3, step: 0.01 },
-    emissiveVelocityBoost: { value: 5.0, min: 0, max: 20, step: 0.1 },
-    roughness: { value: 0.24, min: 0, max: 1, step: 0.01 },
-    metalness: { value: 0.2, min: 0, max: 1, step: 0.01 },
-    wireframe: false,
-  })
+  const [distortionControls, setDistortionControls] = useControls(
+    'Distortion',
+    () => ({
+      noiseAmplitude: { value: 1.6, min: 0, max: 4, step: 0.01 },
+      noiseFrequency: { value: 0.5, min: 0.05, max: 4, step: 0.01 },
+      noiseSpeed: { value: 1.0, min: 0, max: 5, step: 0.01 },
+      followRate: { value: 18, min: 1, max: 50, step: 0.1 },
+      radius: { value: 0.5, min: 0.05, max: 3, step: 0.01 },
+      explodeAmplitude: { value: 1.5, min: 0, max: 5, step: 0.01 },
+      rotationAmplitude: { value: 1.0, min: 0, max: 5, step: 0.01 },
+      spring: { value: 0.05, min: 0.001, max: 0.2, step: 0.001 },
+      friction: { value: 0.9, min: 0.5, max: 0.999, step: 0.001 },
+      idleMix: { value: 0.0, min: 0, max: 0.5, step: 0.001 },
+      color: '#f0f5ff',
+      emissive: '#0b55c7',
+      emissiveIntensity: { value: 0.75, min: 0, max: 3, step: 0.01 },
+      emissiveVelocityBoost: { value: 5.0, min: 0, max: 20, step: 0.1 },
+      roughness: { value: 0.24, min: 0, max: 1, step: 0.01 },
+      metalness: { value: 0.2, min: 0, max: 1, step: 0.01 },
+      wireframe: false,
+    }),
+    [],
+  )
 
-  const postFxControls = useControls('Post FX', {
-    enabled: true,
-    bloomEnabled: true,
-    bloomIntensity: { value: 1.2, min: 0, max: 4, step: 0.01 },
-    bloomThreshold: { value: 0.23, min: 0, max: 1, step: 0.01 },
-    bloomSmoothing: { value: 0.68, min: 0, max: 1, step: 0.01 },
-    dofEnabled: false,
-    dofAutoFocusText: true,
-    dofFocusDistance: { value: 9, min: 0.1, max: 40, step: 0.01 },
-    dofFocusRange: { value: 2, min: 0.05, max: 20, step: 0.01 },
-    dofBokehScale: { value: 1.25, min: 0, max: 8, step: 0.01 },
-    dofResolutionScale: { value: 0.75, min: 0.1, max: 1, step: 0.01 },
-    motionBlurEnabled: false,
-    motionBlurStrength: { value: 0.0015, min: 0, max: 0.01, step: 0.0001 },
-    motionBlurDirectionX: { value: 1.0, min: -2, max: 2, step: 0.01 },
-    motionBlurDirectionY: { value: 0.35, min: -2, max: 2, step: 0.01 },
-    motionBlurSamples: { value: 8, min: 2, max: 24, step: 1 },
-    motionBlurOpacity: { value: 0.3, min: 0, max: 1, step: 0.01 },
-    chromaticEnabled: true,
-    chromaticOffsetX: { value: 0.0012, min: 0, max: 0.01, step: 0.0001 },
-    chromaticOffsetY: { value: 0.0012, min: 0, max: 0.01, step: 0.0001 },
-    noiseEnabled: true,
-    noiseOpacity: { value: 0.12, min: 0, max: 0.8, step: 0.01 },
-    vignetteEnabled: true,
-    vignetteOffset: { value: 0.26, min: 0, max: 1, step: 0.01 },
-    vignetteDarkness: { value: 0.9, min: 0, max: 2, step: 0.01 },
-  })
+  const [postFxControls, setPostFxControls] = useControls(
+    'Post FX',
+    () => ({
+      enabled: true,
+      bloomEnabled: true,
+      bloomIntensity: { value: 1.2, min: 0, max: 4, step: 0.01 },
+      bloomThreshold: { value: 0.23, min: 0, max: 1, step: 0.01 },
+      bloomSmoothing: { value: 0.68, min: 0, max: 1, step: 0.01 },
+      dofEnabled: false,
+      dofAutoFocusText: true,
+      dofFocusDistance: { value: 9, min: 0.1, max: 40, step: 0.01 },
+      dofFocusRange: { value: 2, min: 0.05, max: 20, step: 0.01 },
+      dofBokehScale: { value: 1.25, min: 0, max: 8, step: 0.01 },
+      dofResolutionScale: { value: 0.75, min: 0.1, max: 1, step: 0.01 },
+      motionBlurEnabled: false,
+      motionBlurStrength: { value: 0.0015, min: 0, max: 0.01, step: 0.0001 },
+      motionBlurDirectionX: { value: 1.0, min: -2, max: 2, step: 0.01 },
+      motionBlurDirectionY: { value: 0.35, min: -2, max: 2, step: 0.01 },
+      motionBlurSamples: { value: 8, min: 2, max: 24, step: 1 },
+      motionBlurOpacity: { value: 0.3, min: 0, max: 1, step: 0.01 },
+      chromaticEnabled: true,
+      chromaticOffsetX: { value: 0.0012, min: 0, max: 0.01, step: 0.0001 },
+      chromaticOffsetY: { value: 0.0012, min: 0, max: 0.01, step: 0.0001 },
+      noiseEnabled: true,
+      noiseOpacity: { value: 0.12, min: 0, max: 0.8, step: 0.01 },
+      vignetteEnabled: true,
+      vignetteOffset: { value: 0.26, min: 0, max: 1, step: 0.01 },
+      vignetteDarkness: { value: 0.9, min: 0, max: 2, step: 0.01 },
+    }),
+    [],
+  )
+  const distortionControlsRef = useRef(distortionControls)
+  const postFxControlsRef = useRef(postFxControls)
+  const setDistortionControlsRef = useRef(setDistortionControls)
+  const setPostFxControlsRef = useRef(setPostFxControls)
+
+  const stopTimeline = useCallback(() => {
+    timelineRef.current?.kill()
+    timelineRef.current = null
+    timelineDistortionOverrideRef.current = null
+    setTimelinePlaying(false)
+  }, [])
+
+  const resetTimeline = useCallback(() => {
+    stopTimeline()
+    timelineDistortionOverrideRef.current = null
+
+    const snapshot = timelineSnapshotRef.current
+    const controls = orbitControlsRef.current
+
+    if (!snapshot || !controls) {
+      return
+    }
+
+    setDistortionControlsRef.current(snapshot.distortion)
+    setPostFxControlsRef.current(snapshot.postFx)
+    const activeCamera = controls.object
+    activeCamera.position.copy(snapshot.cameraPosition)
+    if (activeCamera instanceof PerspectiveCamera) {
+      activeCamera.fov = snapshot.cameraFov
+      activeCamera.updateProjectionMatrix()
+    }
+    controls.target.copy(snapshot.cameraTarget)
+    controls.update()
+  }, [stopTimeline])
+
+  const [timelineControls] = useControls(
+    'Timeline',
+    () => ({
+      enabled: {
+        value: false,
+        onChange: (value: boolean) => {
+          setTimelineEnabled(value)
+
+          if (!value) {
+            timelineRef.current?.kill()
+            timelineRef.current = null
+            timelineDistortionOverrideRef.current = null
+            setTimelinePlaying(false)
+            return
+          }
+
+          if (timelineAutoPlayRef.current) {
+            setTimelinePlaying(true)
+          }
+        },
+      },
+      autoPlay: {
+        value: true,
+        onChange: (value: boolean) => {
+          timelineAutoPlayRef.current = value
+        },
+      },
+      loop: true,
+      speed: { value: 1, min: 0.25, max: 2.5, step: 0.01 },
+      sweepIntensity: { value: 1, min: 0.1, max: 2.5, step: 0.01 },
+      preset: { value: 'Club Cuts', options: TIMELINE_PRESET_OPTIONS },
+      cameraRadius: { value: 9, min: 4, max: 18, step: 0.1 },
+      cameraHeight: { value: 0.6, min: -1, max: 4, step: 0.01 },
+      lockOrbitWhilePlaying: true,
+      play: button(() => setTimelinePlaying(true)),
+      pause: button(() => setTimelinePlaying(false)),
+      reset: button(() => resetTimeline()),
+    }),
+    [resetTimeline],
+  )
 
   useControls(
     'Export',
@@ -137,6 +877,13 @@ export function TextDestructionExperience() {
     [exportScreenshot],
   )
 
+  useEffect(() => {
+    return () => {
+      timelineRef.current?.kill()
+      timelineRef.current = null
+    }
+  }, [])
+
   const draftText = useMemo(
     () => textControls.content.trim().replace(/\s+/g, ' ') || DEFAULT_TEXT,
     [textControls.content],
@@ -145,6 +892,281 @@ export function TextDestructionExperience() {
   useEffect(() => {
     draftTextRef.current = draftText
   }, [draftText])
+
+  useEffect(() => {
+    distortionControlsRef.current = distortionControls
+  }, [distortionControls])
+
+  useEffect(() => {
+    postFxControlsRef.current = postFxControls
+  }, [postFxControls])
+
+  useEffect(() => {
+    setDistortionControlsRef.current = setDistortionControls
+  }, [setDistortionControls])
+
+  useEffect(() => {
+    setPostFxControlsRef.current = setPostFxControls
+  }, [setPostFxControls])
+
+  useEffect(() => {
+    const controls = orbitControlsRef.current
+    if (!controls) {
+      return
+    }
+
+    controls.enabled = !(
+      timelineEnabled &&
+      timelinePlaying &&
+      timelineControls.lockOrbitWhilePlaying
+    )
+  }, [
+    timelineEnabled,
+    timelineControls.lockOrbitWhilePlaying,
+    timelinePlaying,
+  ])
+
+  useEffect(() => {
+    const controls = orbitControlsRef.current
+    if (!controls) {
+      return
+    }
+
+    if (!timelineEnabled || !timelinePlaying) {
+      timelineRef.current?.pause()
+      timelineDistortionOverrideRef.current = null
+      return
+    }
+
+    timelineRef.current?.kill()
+
+    const activeCamera = controls.object
+    const distortionState = distortionControlsRef.current
+    const postFxState = postFxControlsRef.current
+
+    const snapshot: TimelineSnapshot = {
+      cameraPosition: activeCamera.position.clone(),
+      cameraTarget: controls.target.clone(),
+      cameraFov: activeCamera instanceof PerspectiveCamera ? activeCamera.fov : 50,
+      distortion: {
+        noiseAmplitude: distortionState.noiseAmplitude,
+        explodeAmplitude: distortionState.explodeAmplitude,
+        rotationAmplitude: distortionState.rotationAmplitude,
+        spring: distortionState.spring,
+        friction: distortionState.friction,
+        emissiveVelocityBoost: distortionState.emissiveVelocityBoost,
+      },
+      postFx: {
+        bloomIntensity: postFxState.bloomIntensity,
+        chromaticOffsetX: postFxState.chromaticOffsetX,
+        chromaticOffsetY: postFxState.chromaticOffsetY,
+        noiseOpacity: postFxState.noiseOpacity,
+        dofBokehScale: postFxState.dofBokehScale,
+        motionBlurStrength: postFxState.motionBlurStrength,
+      },
+    }
+
+    timelineSnapshotRef.current = snapshot
+
+    setPostFxControlsRef.current({
+      dofEnabled: true,
+      motionBlurEnabled: true,
+    })
+
+    const radiusScale = timelineControls.cameraRadius / 9
+    const heightOffset = timelineControls.cameraHeight - snapshot.cameraPosition.y
+
+    const cameraTrack = {
+      x: activeCamera.position.x,
+      y: activeCamera.position.y,
+      z: activeCamera.position.z,
+      tx: controls.target.x,
+      ty: controls.target.y,
+      tz: controls.target.z,
+      fov: snapshot.cameraFov,
+      roll: 0,
+      shake: 0,
+    }
+
+    const distortionTrack = {
+      noiseAmplitude: snapshot.distortion.noiseAmplitude,
+      explodeAmplitude: snapshot.distortion.explodeAmplitude,
+      rotationAmplitude: snapshot.distortion.rotationAmplitude,
+      spring: snapshot.distortion.spring,
+      friction: snapshot.distortion.friction,
+      emissiveVelocityBoost: snapshot.distortion.emissiveVelocityBoost,
+    }
+
+    const baseQuaternion = new Quaternion()
+    const forwardAxis = new Vector3()
+    const rollQuaternion = new Quaternion()
+
+    const applyCamera = () => {
+      const time = performance.now() * 0.001
+      const shakeX = Math.sin(time * 43.7) * cameraTrack.shake
+      const shakeY = Math.cos(time * 57.9) * cameraTrack.shake * 0.7
+      const shakeZ = Math.sin(time * 51.2 + 1.3) * cameraTrack.shake * 0.55
+
+      activeCamera.position.set(
+        cameraTrack.x + shakeX,
+        cameraTrack.y + shakeY,
+        cameraTrack.z + shakeZ,
+      )
+      controls.target.set(
+        cameraTrack.tx + shakeX * 0.18,
+        cameraTrack.ty + shakeY * 0.2,
+        cameraTrack.tz + shakeZ * 0.16,
+      )
+      if (
+        activeCamera instanceof PerspectiveCamera &&
+        Math.abs(activeCamera.fov - cameraTrack.fov) > 0.0001
+      ) {
+        activeCamera.fov = cameraTrack.fov
+        activeCamera.updateProjectionMatrix()
+      }
+      controls.update()
+
+      if (
+        activeCamera instanceof PerspectiveCamera &&
+        Math.abs(cameraTrack.roll) > 0.0001
+      ) {
+        baseQuaternion.copy(activeCamera.quaternion)
+        forwardAxis.set(0, 0, -1).applyQuaternion(baseQuaternion).normalize()
+        rollQuaternion.setFromAxisAngle(forwardAxis, cameraTrack.roll)
+        activeCamera.quaternion.copy(baseQuaternion).multiply(rollQuaternion)
+      }
+    }
+
+    const intensity = timelineControls.sweepIntensity
+    const speed = timelineControls.speed
+    const shots = createCameraShots(
+      asTimelinePreset(timelineControls.preset),
+      radiusScale,
+      heightOffset,
+    )
+
+    const timeline = gsap.timeline({
+      repeat: timelineControls.loop ? -1 : 0,
+      defaults: { ease: 'sine.inOut' },
+      onUpdate: () => {
+        timelineDistortionOverrideRef.current = {
+          noiseAmplitude: distortionTrack.noiseAmplitude,
+          explodeAmplitude: distortionTrack.explodeAmplitude,
+          rotationAmplitude: distortionTrack.rotationAmplitude,
+          spring: distortionTrack.spring,
+          friction: distortionTrack.friction,
+          emissiveVelocityBoost: distortionTrack.emissiveVelocityBoost,
+        }
+        applyCamera()
+      },
+      onComplete: () => {
+        timelineDistortionOverrideRef.current = null
+        setTimelinePlaying(false)
+      },
+    })
+
+    timeline
+      .to(
+        distortionTrack,
+        {
+          noiseAmplitude: clamp(
+            snapshot.distortion.noiseAmplitude * (1 + 0.75 * intensity),
+            0,
+            4,
+          ),
+          explodeAmplitude: clamp(
+            snapshot.distortion.explodeAmplitude * (1 + 0.55 * intensity),
+            0,
+            5,
+          ),
+          rotationAmplitude: clamp(
+            snapshot.distortion.rotationAmplitude * (1 + 0.4 * intensity),
+            0,
+            5,
+          ),
+          spring: clamp(
+            snapshot.distortion.spring * (1 + 0.35 * intensity),
+            0.001,
+            0.2,
+          ),
+          friction: clamp(
+            snapshot.distortion.friction - 0.06 * intensity,
+            0.5,
+            0.999,
+          ),
+          emissiveVelocityBoost: clamp(
+            snapshot.distortion.emissiveVelocityBoost * (1 + 0.5 * intensity),
+            0,
+            20,
+          ),
+          duration: 2 / speed,
+        },
+        0,
+      )
+      .to(
+        distortionTrack,
+        {
+          noiseAmplitude: clamp(snapshot.distortion.noiseAmplitude * (1 + 0.25 * intensity), 0, 4),
+          explodeAmplitude: clamp(snapshot.distortion.explodeAmplitude * (1 + 0.1 * intensity), 0, 5),
+          rotationAmplitude: clamp(snapshot.distortion.rotationAmplitude * (1 + 0.15 * intensity), 0, 5),
+          spring: clamp(snapshot.distortion.spring * (1 + 0.08 * intensity), 0.001, 0.2),
+          friction: clamp(snapshot.distortion.friction - 0.02 * intensity, 0.5, 0.999),
+          emissiveVelocityBoost: clamp(snapshot.distortion.emissiveVelocityBoost * (1 + 0.2 * intensity), 0, 20),
+          duration: 1.8 / speed,
+        },
+        '>',
+      )
+      .to(
+        distortionTrack,
+        {
+          noiseAmplitude: snapshot.distortion.noiseAmplitude,
+          explodeAmplitude: snapshot.distortion.explodeAmplitude,
+          rotationAmplitude: snapshot.distortion.rotationAmplitude,
+          spring: snapshot.distortion.spring,
+          friction: snapshot.distortion.friction,
+          emissiveVelocityBoost: snapshot.distortion.emissiveVelocityBoost,
+          duration: 2.2 / speed,
+        },
+        '>',
+      )
+
+    let shotCursor = 0
+    for (const shot of shots) {
+      const shotDuration = shot.duration / speed
+      const holdDuration = shot.hold / speed
+
+      timeline.set(cameraTrack, shot.cut, shotCursor).to(
+        cameraTrack,
+        {
+          ...shot.move,
+          duration: shotDuration,
+          ease: shot.ease ?? 'power2.inOut',
+        },
+        shotCursor,
+      )
+
+      shotCursor += shotDuration + holdDuration
+    }
+
+    timelineRef.current = timeline
+
+    return () => {
+      timeline.kill()
+      timelineDistortionOverrideRef.current = null
+      if (timelineRef.current === timeline) {
+        timelineRef.current = null
+      }
+    }
+  }, [
+    timelineEnabled,
+    timelineControls.loop,
+    timelineControls.cameraHeight,
+    timelineControls.preset,
+    timelineControls.cameraRadius,
+    timelineControls.speed,
+    timelineControls.sweepIntensity,
+    timelinePlaying,
+  ])
 
   const distortion: DistortionSettings = useMemo(
     () => ({
@@ -318,6 +1340,7 @@ export function TextDestructionExperience() {
         seed={seed}
         meshKey={meshKey}
         distortion={distortion}
+        distortionOverrideRef={timelineDistortionOverrideRef}
         onTogglePause={togglePause}
       />
 
@@ -327,7 +1350,15 @@ export function TextDestructionExperience() {
       </mesh>
 
       <OrbitControls
+        ref={orbitControlsRef}
         makeDefault
+        enabled={
+          !(
+            timelineEnabled &&
+            timelinePlaying &&
+            timelineControls.lockOrbitWhilePlaying
+          )
+        }
         enableDamping
         dampingFactor={0.08}
         minDistance={3.5}

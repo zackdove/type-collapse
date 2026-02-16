@@ -2,7 +2,7 @@ import { Text3D } from '@react-three/drei'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { createNoise3D } from 'simplex-noise'
 import gsap from 'gsap'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
 import type { BufferGeometry, Mesh, MeshStandardMaterial } from 'three'
 import { BufferAttribute, Color, Euler, Vector3 } from 'three'
 
@@ -39,6 +39,7 @@ type ElasticTextProps = {
   seed: number
   meshKey: string
   distortion: DistortionSettings
+  distortionOverrideRef?: MutableRefObject<Partial<DistortionSettings> | null>
   onTogglePause: () => void
 }
 
@@ -74,6 +75,7 @@ export function ElasticText({
   seed,
   meshKey,
   distortion,
+  distortionOverrideRef,
   onTogglePause,
 }: ElasticTextProps) {
   const meshRef = useRef<Mesh>(null)
@@ -194,11 +196,16 @@ export function ElasticText({
       return
     }
 
+    const distortionOverride = distortionOverrideRef?.current
+    const activeDistortion = distortionOverride
+      ? { ...distortion, ...distortionOverride }
+      : distortion
+
     const shader = shaderRef.current
     if (shader) {
-      shader.uniforms.uEmissiveBaseColor.value.set(distortion.emissive)
-      shader.uniforms.uEmissiveBoost.value = distortion.emissiveVelocityBoost
-      shader.uniforms.uEmissiveIntensity.value = distortion.emissiveIntensity
+      shader.uniforms.uEmissiveBaseColor.value.set(activeDistortion.emissive)
+      shader.uniforms.uEmissiveBoost.value = activeDistortion.emissiveVelocityBoost
+      shader.uniforms.uEmissiveIntensity.value = activeDistortion.emissiveIntensity
     }
 
     if (paused) {
@@ -207,11 +214,11 @@ export function ElasticText({
 
     timeRef.current += delta
 
-    const followAlpha = 1 - Math.exp(-delta * distortion.followRate)
+    const followAlpha = 1 - Math.exp(-delta * activeDistortion.followRate)
     pointerCurrentRef.current.lerp(pointerTargetRef.current, followAlpha)
 
     const press = pointerPressRef.current.value
-    const idleMix = distortion.idleMix
+    const idleMix = activeDistortion.idleMix
     const mixFactor = Math.max(press, idleMix)
 
     const pointer = pointerCurrentRef.current
@@ -221,9 +228,9 @@ export function ElasticText({
     const velocityArray = simulation.velocityArray
 
     const noise3d = noise3dRef.current
-    const frequency = distortion.noiseFrequency
-    const t = timeRef.current * distortion.noiseSpeed + seed * 0.001
-    const radius = Math.max(distortion.radius, 0.0001)
+    const frequency = activeDistortion.noiseFrequency
+    const t = timeRef.current * activeDistortion.noiseSpeed + seed * 0.001
+    const radius = Math.max(activeDistortion.radius, 0.0001)
 
     const scratchVector = scratchVectorRef.current
     const scratchEuler = scratchEulerRef.current
@@ -246,18 +253,18 @@ export function ElasticText({
       const dz = baseZ - pointer.z
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
 
-      const pointerInfluence = distance <= radius ? distortion.explodeAmplitude : 0
+      const pointerInfluence = distance <= radius ? activeDistortion.explodeAmplitude : 0
 
       const noiseX = noise3d(currentX * frequency + seed * 0.17, currentY * frequency + t, currentZ * frequency)
       const noiseY = noise3d(currentX * frequency, currentY * frequency + 23.713 + t, currentZ * frequency + seed * 0.31)
       const noiseZ = noise3d(currentX * frequency + seed * 0.59, currentY * frequency + t, currentZ * frequency + 51.219)
 
-      let distortedX = baseX + noiseX * normalX * pointerInfluence * distortion.noiseAmplitude
-      let distortedY = baseY + noiseY * normalY * pointerInfluence * distortion.noiseAmplitude
-      let distortedZ = baseZ + noiseZ * normalZ * pointerInfluence * distortion.noiseAmplitude
+      let distortedX = baseX + noiseX * normalX * pointerInfluence * activeDistortion.noiseAmplitude
+      let distortedY = baseY + noiseY * normalY * pointerInfluence * activeDistortion.noiseAmplitude
+      let distortedZ = baseZ + noiseZ * normalZ * pointerInfluence * activeDistortion.noiseAmplitude
 
       if (pointerInfluence > 0) {
-        const rotationFactor = distance * pointerInfluence * distortion.rotationAmplitude
+        const rotationFactor = distance * pointerInfluence * activeDistortion.rotationAmplitude
 
         scratchEuler.set(
           normalX * rotationFactor,
@@ -279,17 +286,17 @@ export function ElasticText({
       let velocityY = velocityArray[i + 1]
       let velocityZ = velocityArray[i + 2]
 
-      velocityX += (targetX - currentX) * distortion.spring
-      velocityY += (targetY - currentY) * distortion.spring
-      velocityZ += (targetZ - currentZ) * distortion.spring
+      velocityX += (targetX - currentX) * activeDistortion.spring
+      velocityY += (targetY - currentY) * activeDistortion.spring
+      velocityZ += (targetZ - currentZ) * activeDistortion.spring
 
       const nextX = currentX + velocityX
       const nextY = currentY + velocityY
       const nextZ = currentZ + velocityZ
 
-      velocityX *= distortion.friction
-      velocityY *= distortion.friction
-      velocityZ *= distortion.friction
+      velocityX *= activeDistortion.friction
+      velocityY *= activeDistortion.friction
+      velocityZ *= activeDistortion.friction
 
       positionArray[i] = nextX
       positionArray[i + 1] = nextY
