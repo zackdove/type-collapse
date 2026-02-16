@@ -1,18 +1,23 @@
 import { Center, Text3D } from '@react-three/drei'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
+import { createNoise3D } from 'simplex-noise'
 import gsap from 'gsap'
 import { useCallback, useEffect, useRef } from 'react'
-import type { Mesh } from 'three'
-import { Vector3 } from 'three'
+import type { BufferGeometry, Mesh, MeshStandardMaterial } from 'three'
+import { BufferAttribute, Color, Euler, Vector3 } from 'three'
 
 export type DistortionSettings = {
-  amplitude: number
-  frequency: number
-  speed: number
+  noiseAmplitude: number
+  noiseFrequency: number
+  noiseSpeed: number
   followRate: number
-  impactRadius: number
-  impactFalloff: number
-  impactImpulse: number
+  radius: number
+  explodeAmplitude: number
+  rotationAmplitude: number
+  spring: number
+  friction: number
+  idleMix: number
+  emissiveVelocityBoost: number
   color: string
   emissive: string
   emissiveIntensity: number
@@ -37,101 +42,24 @@ type ElasticTextProps = {
   onTogglePause: () => void
 }
 
-type ElasticShader = {
+type SimulationState = {
+  geometry: BufferGeometry
+  positionArray: Float32Array
+  basePositionArray: Float32Array
+  baseNormalArray: Float32Array
+  velocityArray: Float32Array
+  velocityAttribute: BufferAttribute
+}
+
+type EmissiveShader = {
   uniforms: {
-    uTime: { value: number }
-    uAmplitude: { value: number }
-    uFrequency: { value: number }
-    uSpeed: { value: number }
-    uImpactRadius: { value: number }
-    uImpactFalloff: { value: number }
-    uImpactStrength: { value: number }
-    uImpact: { value: Vector3 }
-    uSeed: { value: number }
-    uPause: { value: number }
+    uEmissiveBaseColor: { value: Color }
+    uEmissiveBoost: { value: number }
+    uEmissiveIntensity: { value: number }
   }
   vertexShader: string
+  fragmentShader: string
 }
-
-const SIMPLEX_3D_GLSL = `
-vec3 mod289(vec3 x) {
-  return x - floor(x * (1.0 / 289.0)) * 289.0;
-}
-
-vec4 mod289(vec4 x) {
-  return x - floor(x * (1.0 / 289.0)) * 289.0;
-}
-
-vec4 permute(vec4 x) {
-  return mod289(((x * 34.0) + 1.0) * x);
-}
-
-vec4 taylorInvSqrt(vec4 r) {
-  return 1.79284291400159 - 0.85373472095314 * r;
-}
-
-float snoise(vec3 v) {
-  const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
-  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
-
-  vec3 i = floor(v + dot(v, C.yyy));
-  vec3 x0 = v - i + dot(i, C.xxx);
-
-  vec3 g = step(x0.yzx, x0.xyz);
-  vec3 l = 1.0 - g;
-  vec3 i1 = min(g.xyz, l.zxy);
-  vec3 i2 = max(g.xyz, l.zxy);
-
-  vec3 x1 = x0 - i1 + C.xxx;
-  vec3 x2 = x0 - i2 + C.yyy;
-  vec3 x3 = x0 - D.yyy;
-
-  i = mod289(i);
-  vec4 p = permute(
-    permute(
-      permute(i.z + vec4(0.0, i1.z, i2.z, 1.0)) + i.y + vec4(0.0, i1.y, i2.y, 1.0)
-    ) + i.x + vec4(0.0, i1.x, i2.x, 1.0)
-  );
-
-  float n_ = 0.142857142857;
-  vec3 ns = n_ * D.wyz - D.xzx;
-
-  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
-
-  vec4 x_ = floor(j * ns.z);
-  vec4 y_ = floor(j - 7.0 * x_);
-
-  vec4 x = x_ * ns.x + ns.yyyy;
-  vec4 y = y_ * ns.x + ns.yyyy;
-  vec4 h = 1.0 - abs(x) - abs(y);
-
-  vec4 b0 = vec4(x.xy, y.xy);
-  vec4 b1 = vec4(x.zw, y.zw);
-
-  vec4 s0 = floor(b0) * 2.0 + 1.0;
-  vec4 s1 = floor(b1) * 2.0 + 1.0;
-  vec4 sh = -step(h, vec4(0.0));
-
-  vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
-  vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
-
-  vec3 p0 = vec3(a0.xy, h.x);
-  vec3 p1 = vec3(a0.zw, h.y);
-  vec3 p2 = vec3(a1.xy, h.z);
-  vec3 p3 = vec3(a1.zw, h.w);
-
-  vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
-  p0 *= norm.x;
-  p1 *= norm.y;
-  p2 *= norm.z;
-  p3 *= norm.w;
-
-  vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
-  m = m * m;
-
-  return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
-}
-`
 
 export function ElasticText({
   text,
@@ -149,31 +77,76 @@ export function ElasticText({
   onTogglePause,
 }: ElasticTextProps) {
   const meshRef = useRef<Mesh>(null)
-  const shaderRef = useRef<ElasticShader | null>(null)
-  const timeRef = useRef(0)
+  const materialRef = useRef<MeshStandardMaterial>(null)
+  const shaderRef = useRef<EmissiveShader | null>(null)
+  const simulationRef = useRef<SimulationState | null>(null)
 
-  const currentImpactRef = useRef(new Vector3())
-  const targetImpactRef = useRef(new Vector3())
-  const impactStateRef = useRef({ strength: 0 })
+  const timeRef = useRef(0)
+  const noise3dRef = useRef(createNoise3D())
+
+  const pointerCurrentRef = useRef(new Vector3())
+  const pointerTargetRef = useRef(new Vector3())
+  const pointerPressRef = useRef({ value: 0 })
   const pauseBlendRef = useRef({ value: paused ? 1 : 0 })
 
-  const triggerImpact = useCallback(() => {
-    gsap.killTweensOf(impactStateRef.current)
-    gsap.to(impactStateRef.current, {
-      strength: distortion.impactImpulse,
-      duration: 0.13,
-      ease: 'power3.out',
+  const scratchVectorRef = useRef(new Vector3())
+  const scratchEulerRef = useRef(new Euler())
+
+  const initializeSimulation = useCallback(() => {
+    const mesh = meshRef.current
+    if (!mesh) {
+      simulationRef.current = null
+      return
+    }
+
+    const geometry = mesh.geometry
+    const position = geometry.getAttribute('position')
+    const normal = geometry.getAttribute('normal')
+
+    if (!position || !normal) {
+      simulationRef.current = null
+      return
+    }
+
+    const positionArray = position.array as Float32Array
+
+    const velocityArray = new Float32Array(positionArray.length)
+    const velocityAttribute = new BufferAttribute(velocityArray, 3)
+    geometry.setAttribute('aVelocity', velocityAttribute)
+
+    simulationRef.current = {
+      geometry,
+      positionArray,
+      basePositionArray: new Float32Array(positionArray),
+      baseNormalArray: new Float32Array(normal.array as Float32Array),
+      velocityArray,
+      velocityAttribute,
+    }
+
+    pointerCurrentRef.current.set(0, 0, 0)
+    pointerTargetRef.current.set(0, 0, 0)
+    pointerPressRef.current.value = 0
+  }, [])
+
+  const engagePointer = useCallback(() => {
+    gsap.killTweensOf(pointerPressRef.current)
+    gsap.to(pointerPressRef.current, {
+      value: 1,
+      duration: 0.08,
+      ease: 'power2.out',
       overwrite: true,
-      onComplete: () => {
-        gsap.to(impactStateRef.current, {
-          strength: 0,
-          duration: 0.7,
-          ease: 'expo.out',
-          overwrite: true,
-        })
-      },
     })
-  }, [distortion.impactImpulse])
+  }, [])
+
+  const releasePointer = useCallback(() => {
+    gsap.killTweensOf(pointerPressRef.current)
+    gsap.to(pointerPressRef.current, {
+      value: 0,
+      duration: 0.35,
+      ease: 'expo.out',
+      overwrite: true,
+    })
+  }, [])
 
   const handlePointerMove = useCallback(
     (event: ThreeEvent<PointerEvent>) => {
@@ -182,11 +155,15 @@ export function ElasticText({
       }
 
       const localPoint = meshRef.current.worldToLocal(event.point.clone())
-      targetImpactRef.current.copy(localPoint)
-      triggerImpact()
+      pointerTargetRef.current.copy(localPoint)
+      engagePointer()
     },
-    [paused, triggerImpact],
+    [engagePointer, paused],
   )
+
+  const handlePointerOut = useCallback(() => {
+    releasePointer()
+  }, [releasePointer])
 
   const handleClick = useCallback(
     (event: ThreeEvent<MouseEvent>) => {
@@ -197,27 +174,35 @@ export function ElasticText({
   )
 
   useEffect(() => {
+    initializeSimulation()
+  }, [initializeSimulation, meshKey])
+
+  useEffect(() => {
     gsap.to(pauseBlendRef.current, {
       value: paused ? 1 : 0,
-      duration: 0.35,
+      duration: 0.25,
       ease: 'power2.out',
       overwrite: true,
     })
-  }, [paused])
+
+    if (paused) {
+      releasePointer()
+    }
+  }, [paused, releasePointer])
 
   useEffect(() => {
-    const impactState = impactStateRef.current
-    const pauseBlend = pauseBlendRef.current
+    const pointerPressState = pointerPressRef.current
+    const pauseBlendState = pauseBlendRef.current
 
     return () => {
-      gsap.killTweensOf(impactState)
-      gsap.killTweensOf(pauseBlend)
+      gsap.killTweensOf(pointerPressState)
+      gsap.killTweensOf(pauseBlendState)
     }
   }, [])
 
   useFrame((_, delta) => {
-    const shader = shaderRef.current
-    if (!shader) {
+    const simulation = simulationRef.current
+    if (!simulation) {
       return
     }
 
@@ -226,18 +211,110 @@ export function ElasticText({
     }
 
     const followAlpha = 1 - Math.exp(-delta * distortion.followRate)
-    currentImpactRef.current.lerp(targetImpactRef.current, followAlpha)
+    pointerCurrentRef.current.lerp(pointerTargetRef.current, followAlpha)
 
-    shader.uniforms.uTime.value = timeRef.current
-    shader.uniforms.uAmplitude.value = distortion.amplitude
-    shader.uniforms.uFrequency.value = distortion.frequency
-    shader.uniforms.uSpeed.value = distortion.speed
-    shader.uniforms.uImpactRadius.value = distortion.impactRadius
-    shader.uniforms.uImpactFalloff.value = distortion.impactFalloff
-    shader.uniforms.uImpactStrength.value = impactStateRef.current.strength
-    shader.uniforms.uImpact.value.copy(currentImpactRef.current)
-    shader.uniforms.uSeed.value = seed
-    shader.uniforms.uPause.value = pauseBlendRef.current.value
+    const pauseBlend = pauseBlendRef.current.value
+    const press = pointerPressRef.current.value * (1 - pauseBlend)
+    const idleMix = distortion.idleMix * (1 - pauseBlend)
+    const mixFactor = Math.max(press, idleMix)
+
+    const pointer = pointerCurrentRef.current
+    const positionArray = simulation.positionArray
+    const basePositionArray = simulation.basePositionArray
+    const baseNormalArray = simulation.baseNormalArray
+    const velocityArray = simulation.velocityArray
+
+    const noise3d = noise3dRef.current
+    const frequency = distortion.noiseFrequency
+    const t = timeRef.current * distortion.noiseSpeed + seed * 0.001
+    const radius = Math.max(distortion.radius, 0.0001)
+
+    const scratchVector = scratchVectorRef.current
+    const scratchEuler = scratchEulerRef.current
+
+    for (let i = 0; i < positionArray.length; i += 3) {
+      const baseX = basePositionArray[i]
+      const baseY = basePositionArray[i + 1]
+      const baseZ = basePositionArray[i + 2]
+
+      const currentX = positionArray[i]
+      const currentY = positionArray[i + 1]
+      const currentZ = positionArray[i + 2]
+
+      const normalX = baseNormalArray[i]
+      const normalY = baseNormalArray[i + 1]
+      const normalZ = baseNormalArray[i + 2]
+
+      const dx = baseX - pointer.x
+      const dy = baseY - pointer.y
+      const dz = baseZ - pointer.z
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
+
+      const pointerInfluence = distance <= radius ? distortion.explodeAmplitude : 0
+
+      const noiseX = noise3d(currentX * frequency + seed * 0.17, currentY * frequency + t, currentZ * frequency)
+      const noiseY = noise3d(currentX * frequency, currentY * frequency + 23.713 + t, currentZ * frequency + seed * 0.31)
+      const noiseZ = noise3d(currentX * frequency + seed * 0.59, currentY * frequency + t, currentZ * frequency + 51.219)
+
+      let distortedX = baseX + noiseX * normalX * pointerInfluence * distortion.noiseAmplitude
+      let distortedY = baseY + noiseY * normalY * pointerInfluence * distortion.noiseAmplitude
+      let distortedZ = baseZ + noiseZ * normalZ * pointerInfluence * distortion.noiseAmplitude
+
+      if (pointerInfluence > 0) {
+        const rotationFactor = distance * pointerInfluence * distortion.rotationAmplitude
+
+        scratchEuler.set(
+          normalX * rotationFactor,
+          normalY * rotationFactor,
+          normalZ * rotationFactor,
+        )
+
+        scratchVector.set(distortedX, distortedY, distortedZ).applyEuler(scratchEuler)
+        distortedX = scratchVector.x
+        distortedY = scratchVector.y
+        distortedZ = scratchVector.z
+      }
+
+      const targetX = baseX + (distortedX - baseX) * mixFactor
+      const targetY = baseY + (distortedY - baseY) * mixFactor
+      const targetZ = baseZ + (distortedZ - baseZ) * mixFactor
+
+      let velocityX = velocityArray[i]
+      let velocityY = velocityArray[i + 1]
+      let velocityZ = velocityArray[i + 2]
+
+      velocityX += (targetX - currentX) * distortion.spring
+      velocityY += (targetY - currentY) * distortion.spring
+      velocityZ += (targetZ - currentZ) * distortion.spring
+
+      const nextX = currentX + velocityX
+      const nextY = currentY + velocityY
+      const nextZ = currentZ + velocityZ
+
+      velocityX *= distortion.friction
+      velocityY *= distortion.friction
+      velocityZ *= distortion.friction
+
+      positionArray[i] = nextX
+      positionArray[i + 1] = nextY
+      positionArray[i + 2] = nextZ
+
+      velocityArray[i] = velocityX
+      velocityArray[i + 1] = velocityY
+      velocityArray[i + 2] = velocityZ
+
+    }
+
+    simulation.geometry.attributes.position.needsUpdate = true
+
+    simulation.velocityAttribute.needsUpdate = true
+
+    const shader = shaderRef.current
+    if (shader) {
+      shader.uniforms.uEmissiveBaseColor.value.set(distortion.emissive)
+      shader.uniforms.uEmissiveBoost.value = distortion.emissiveVelocityBoost
+      shader.uniforms.uEmissiveIntensity.value = distortion.emissiveIntensity
+    }
   })
 
   return (
@@ -254,57 +331,67 @@ export function ElasticText({
           bevelThickness={bevelThickness}
           curveSegments={curveSegments}
           onPointerMove={handlePointerMove}
+          onPointerOut={handlePointerOut}
+          onPointerUp={handlePointerOut}
           onClick={handleClick}
         >
           {text}
           <meshStandardMaterial
+            ref={materialRef}
             color={distortion.color}
             emissive={distortion.emissive}
             emissiveIntensity={distortion.emissiveIntensity}
             roughness={distortion.roughness}
             metalness={distortion.metalness}
             wireframe={distortion.wireframe}
-            customProgramCacheKey={() => 'elastic-text-v1'}
-            onBeforeCompile={(shader: ElasticShader) => {
-              shader.uniforms.uTime = { value: 0 }
-              shader.uniforms.uAmplitude = { value: distortion.amplitude }
-              shader.uniforms.uFrequency = { value: distortion.frequency }
-              shader.uniforms.uSpeed = { value: distortion.speed }
-              shader.uniforms.uImpactRadius = { value: distortion.impactRadius }
-              shader.uniforms.uImpactFalloff = { value: distortion.impactFalloff }
-              shader.uniforms.uImpactStrength = { value: 0 }
-              shader.uniforms.uImpact = { value: new Vector3() }
-              shader.uniforms.uSeed = { value: seed }
-              shader.uniforms.uPause = { value: pauseBlendRef.current.value }
+            customProgramCacheKey={() => 'elastic-emissive-velocity-v1'}
+            onBeforeCompile={(shader: EmissiveShader) => {
+              shader.uniforms.uEmissiveBaseColor = {
+                value: new Color(distortion.emissive),
+              }
+              shader.uniforms.uEmissiveBoost = {
+                value: distortion.emissiveVelocityBoost,
+              }
+              shader.uniforms.uEmissiveIntensity = {
+                value: distortion.emissiveIntensity,
+              }
 
               shader.vertexShader = shader.vertexShader
                 .replace(
                   '#include <common>',
                   `#include <common>
-uniform float uTime;
-uniform float uAmplitude;
-uniform float uFrequency;
-uniform float uSpeed;
-uniform float uImpactRadius;
-uniform float uImpactFalloff;
-uniform float uImpactStrength;
-uniform vec3 uImpact;
-uniform float uSeed;
-uniform float uPause;
-${SIMPLEX_3D_GLSL}`,
+attribute vec3 aVelocity;
+varying vec3 vVelocity;`,
                 )
                 .replace(
                   '#include <begin_vertex>',
-                  `vec3 transformed = vec3(position);
-float t = uTime * uSpeed + uSeed;
-float coarseNoise = snoise(vec3(position * uFrequency + t));
-float fineNoise = snoise(vec3(position * (uFrequency * 2.7) - t * 0.65));
-float wave = sin((position.x + position.y * 1.4 + position.z * 0.75) * 3.2 + t * 2.2);
-float glitch = ((coarseNoise * 0.65) + (fineNoise * 0.2) + (wave * 0.15)) * uAmplitude * (1.0 - uPause);
-float d = distance(position, uImpact);
-float impactFalloff = exp(-uImpactFalloff * d * d);
-float impact = impactFalloff * uImpactStrength * uImpactRadius * (1.0 - uPause);
-transformed += normal * (glitch + impact);`,
+                  `#include <begin_vertex>
+vVelocity = aVelocity;`,
+                )
+
+              shader.fragmentShader = shader.fragmentShader
+                .replace(
+                  '#include <common>',
+                  `#include <common>
+uniform vec3 uEmissiveBaseColor;
+uniform float uEmissiveBoost;
+uniform float uEmissiveIntensity;
+varying vec3 vVelocity;
+
+vec3 tslHue(vec3 baseColor, vec3 adjustment) {
+  vec3 k = vec3(0.57735, 0.57735, 0.57735);
+  vec3 cosAngle = cos(adjustment);
+  return (baseColor * cosAngle) +
+    (cross(k, baseColor) * sin(adjustment)) +
+    (k * (dot(k, baseColor) * (vec3(1.0) - cosAngle)));
+}`,
+                )
+                .replace(
+                  'vec3 totalEmissiveRadiance = emissive;',
+                  `vec3 hueRotated = vVelocity * (3.14159265 * 10.0);
+float emissionFactor = length(vVelocity) * 10.0;
+vec3 shiftedEmissive = tslHue(uEmissiveBaseColor, hueRotated) * emissionFactor * uEmissiveBoost * uEmissiveIntensity;
+vec3 totalEmissiveRadiance = shiftedEmissive;`,
                 )
 
               shaderRef.current = shader
