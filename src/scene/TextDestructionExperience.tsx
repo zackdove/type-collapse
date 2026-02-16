@@ -1610,12 +1610,25 @@ export function TextDestructionExperience() {
 
   const meshKey = useMemo(
     () =>
-      `${renderedText}:${textControls.font}:${textControls.curveSegments}:${textControls.bevelEnabled ? 1 : 0}`,
+      [
+        renderedText,
+        textControls.font,
+        textControls.size,
+        textControls.depth,
+        textControls.curveSegments,
+        textControls.bevelEnabled ? 1 : 0,
+        textControls.bevelSize,
+        textControls.bevelThickness,
+      ].join(':'),
     [
+      textControls.bevelSize,
+      textControls.bevelThickness,
       renderedText,
+      textControls.depth,
       textControls.bevelEnabled,
       textControls.curveSegments,
       textControls.font,
+      textControls.size,
     ],
   );
 
