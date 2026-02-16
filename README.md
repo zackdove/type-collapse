@@ -1,3 +1,22 @@
+# Type Collapse
+
+## Adding custom 3D fonts
+
+This project uses `Text3D`, which needs Three.js `typeface.json` font data.
+
+1. Put your source font somewhere local (for example: `.tmp/fonts-src/MyFont.ttf`).
+2. Convert it:
+
+```bash
+npm run font:convert -- .tmp/fonts-src/MyFont.ttf public/fonts/my_font.typeface.json
+```
+
+3. Add it to the dropdown in `src/data/fonts.ts`.
+
+Notes:
+- `.ttf` and `.otf` are both supported by the converter script.
+- Large/complex fonts can create very heavy geometry and reduce FPS.
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
